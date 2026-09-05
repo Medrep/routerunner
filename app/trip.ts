@@ -111,6 +111,8 @@ export function scenario(key: string): Trip {
   if (key === 'A')
     return { ...normal(), current: 0, clock: 600, started: false };
   if (key === 'C') return { ...normal(), current: 4, clock: 955, extra: 15 };
+  if (key === 'F')
+    return { ...normal(), current: 4, clock: 955, skipped: true, extra: 0 };
   if (key === 'risk')
     return { ...normal(), current: 4, clock: 1005, extra: 15 };
   if (key === 'complete') return { ...normal(), current: 7, clock: 1068 };

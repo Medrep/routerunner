@@ -55,6 +55,7 @@ const scenarios = [
   ['A', 'A · Trip start'],
   ['B', 'B · Normal execution'],
   ['C', 'C · Schedule tight'],
+  ['F', 'F · Reffen skipped · back on plan'],
   ['D', 'D · Fullscreen map'],
   ['E', 'E · Stop expanded'],
   ['risk', 'Deadline at risk'],
@@ -76,19 +77,21 @@ export default function Page() {
   const [detail, setDetail] = useState<number | null>(null);
   const [kept, setKept] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [skipNotice, setSkipNotice] = useState<'brief' | 'on-plan' | ''>('');
   const finished = trip.current >= 7 || trip.ended;
   const current = stops[Math.min(trip.current, 6)];
   const next = nextIndex(trip);
   const upcoming = next < 7 ? stops[next] : null;
   const nextLeg = next < 7 ? leg(next, trip) : null;
-  const buffer = 1110 - trip.clock - remaining(trip);
+  const buffer = trip.skipped ? 35 : 1110 - trip.clock - remaining(trip);
   const tight = buffer <= 20 && !finished;
   const risk = buffer < 0 && !finished;
-  const endTime = trip.clock + remaining(trip);
+  const endTime = 1110 - buffer;
   const canSkip = !trip.skipped && trip.current <= 5 && !finished;
   function preview(key: string) {
     setDemo(key);
     setFeedback('');
+    setSkipNotice('');
     if (key === 'D') {
       setFull(true);
       return;
@@ -112,11 +115,13 @@ export default function Page() {
   }
   function skip() {
     setTrip((t) => skipReffen(t));
-    setFeedback(
-      trip.current === 5
-        ? 'Reffen skipped. Christiania is now your current stop.'
-        : 'Reffen skipped. Your route is shorter and your time buffer is updated.',
-    );
+    setDemo('F');
+    setSkipNotice('brief');
+    setFeedback('Reffen skipped · +17 min buffer');
+    window.setTimeout(() => {
+      setSkipNotice('on-plan');
+      setFeedback('Back on plan · 35 min buffer');
+    }, 1500);
     setDetail(null);
   }
   function navHref(index: number) {
@@ -226,38 +231,6 @@ export default function Page() {
                 Full map
               </button>
             </section>
-            <div className="map-legend">
-              <span>
-                <i className="legend-done" />
-                Completed
-              </span>
-              <span>
-                <i className="legend-now" />
-                Current
-              </span>
-              <span>
-                <i className="legend-next" />
-                Next
-              </span>
-              <span>
-                <i className="legend-optional" />
-                Optional
-              </span>
-            </div>
-            <div className="mode-legend">
-              <span>
-                <Footprints size={13} />
-                Walk · dotted
-              </span>
-              <span>
-                <Ship size={13} />
-                Ferry · blue dash
-              </span>
-              <span>
-                <TrainFront size={13} />
-                Transit · long dash
-              </span>
-            </div>
             <div className="map-day-note">
               <Flag size={18} />
               <p>
@@ -404,10 +377,8 @@ export default function Page() {
                   <strong>A little more breathing room</strong>
                 </div>
                 <p>
-                  {risk
-                    ? 'The 18:30 hard stop is at risk.'
-                    : 'Only ' + buffer + ' minutes of buffer remain.'}{' '}
-                  Reffen adds ~40 min to your day.
+                  Reffen adds about 40 min. Only {buffer} min of buffer remain
+                  before the 18:30 hard stop.
                 </p>
                 <div className="recommendation-actions">
                   <button onClick={skip}>
@@ -415,7 +386,7 @@ export default function Page() {
                   </button>
                   <button onClick={() => setKept(true)}>Keep it</button>
                 </div>
-                <span>Recover ~35 min by taking the direct route.</span>
+                <span>Skip Reffen → restore ~35 min buffer.</span>
               </section>
             )}
             {risk && (
@@ -441,7 +412,7 @@ export default function Page() {
               </div>
             )}
             <div
-              className={`feedback ${feedback ? 'has-feedback' : ''}`}
+              className={`feedback ${feedback ? 'has-feedback' : ''} ${skipNotice ? `skip-${skipNotice}` : ''}`}
               role="status"
               aria-live="polite"
             >

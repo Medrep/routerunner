@@ -921,6 +921,18 @@ body {
   background: #e4eee3;
   border-radius: 9px;
 }
+.feedback.skip-brief,
+.feedback.skip-on-plan {
+  font-weight: 650;
+}
+.feedback.skip-brief {
+  background: #f5efd9;
+  color: #614a1b;
+}
+.feedback.skip-on-plan {
+  background: #e4eee3;
+  color: #286342;
+}
 .recommendation {
   background: #f5efd9;
   border: 1px solid #e4d9b7;

@@ -2255,6 +2255,10 @@ footer small {
 .board-itinerary-item.current > button {
   background: #e4eee3;
 }
+.board-itinerary-item.selected > button {
+  outline: 1px solid #7ca08a;
+  background: #f0f4ed;
+}
 .board-stop-number {
   width: 25px;
   height: 25px;
@@ -2354,6 +2358,66 @@ footer small {
   color: #23392f;
   background: white;
   box-shadow: 0 -8px 28px #153b3422;
+}
+.phone-preview-context {
+  margin: 13px 0 4px;
+  padding: 16px;
+  border-radius: 9px;
+  color: #344b3e;
+  background: #e9efe9;
+}
+.phone-preview-context strong,
+.phone-preview-context p {
+  display: block;
+}
+.phone-preview-context strong {
+  font-size: 16px;
+}
+.phone-preview-context p {
+  margin-top: 5px;
+  color: #607066;
+  font-size: 11px;
+}
+.phone-trip-overview {
+  padding: 18px 15px 8px;
+}
+.phone-trip-overview > h3 {
+  margin-top: 5px;
+  font-size: 31px;
+  letter-spacing: -1px;
+}
+.trip-overview-count {
+  margin-top: 3px;
+  color: #617067;
+  font-size: 13px;
+}
+.phone-trip-overview article {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 15px;
+  padding: 16px;
+  border: 1px solid #d2dbd3;
+  border-radius: 11px;
+  background: #f8faf6;
+}
+.phone-trip-overview article > div {
+  flex: 1;
+}
+.phone-trip-overview article strong,
+.phone-trip-overview article span {
+  display: block;
+}
+.phone-trip-overview article strong {
+  font-size: 18px;
+}
+.phone-trip-overview article span {
+  margin-top: 4px;
+  color: #637168;
+  font-size: 11px;
+}
+.phone-trip-overview .board-button {
+  flex: 0 0 108px;
 }
 .sheet-handle {
   width: 38px;

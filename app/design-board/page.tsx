@@ -15,7 +15,7 @@ import {
   TrainFront,
 } from 'lucide-react';
 import RouteMap from '../route-map';
-import { normal, scenario, type Trip } from '../trip';
+import { normal, type Trip } from '../trip';
 
 type StateKind =
   | 'execution'
@@ -23,6 +23,7 @@ type StateKind =
   | 'decision'
   | 'resolution'
   | 'preview'
+  | 'overview'
   | 'complete'
   | 'zero';
 
@@ -34,41 +35,116 @@ type BoardState = {
   kind: StateKind;
   health?: string;
   metric?: string;
+  firstStop?: string;
+  firstStopMeta?: string;
   current?: string;
   next?: string;
   currentMeta?: string;
   nextMeta?: string;
   description: string;
   actions: string[];
-  itinerary: Array<{ name: string; status: string; meta?: string }>;
+  itinerary: Array<{
+    name: string;
+    status: string;
+    meta?: string;
+    number?: number;
+    selected?: boolean;
+  }>;
+  selectedStop?: string;
+  selectedMeta?: string;
+  mapTrip?: Trip;
   note?: string;
   hardStop?: string;
   timedAlert?: string;
   fullMap?: boolean;
 };
 
-const cphItinerary = [
-  { name: 'Nyhavn', status: 'completed', meta: 'Visited' },
-  { name: 'Amalienborg', status: 'completed', meta: 'Visited' },
-  { name: 'Marble Church', status: 'completed', meta: 'Visited' },
-  { name: 'Kastellet', status: 'current', meta: 'NOW · 20 min' },
-  { name: 'Little Mermaid', status: 'next', meta: 'NEXT · Walk 14 min' },
-  { name: 'Reffen', status: 'optional', meta: 'OPTIONAL · 35 min' },
-  { name: 'Christiania', status: 'future', meta: 'MUST · 35 min' },
+const cphNames = [
+  'Nyhavn',
+  'Amalienborg',
+  'Marble Church',
+  'Kastellet',
+  'Little Mermaid',
+  'Reffen',
+  'Christiania',
 ];
 
-const cphSkipped = cphItinerary.map((stop) =>
-  stop.name === 'Reffen'
-    ? { ...stop, status: 'skipped', meta: 'Skipped · optional' }
-    : stop,
-);
+function cphPlan(
+  current: number | null,
+  options: {
+    skipped?: number[];
+    saved?: number[];
+    selected?: number;
+    completedThrough?: number;
+  } = {},
+) {
+  const skipped = options.skipped ?? [];
+  const saved = options.saved ?? [];
+  return cphNames.map((name, index) => {
+    let status = 'future';
+    if (skipped.includes(index)) status = 'skipped';
+    else if (saved.includes(index)) status = 'saved';
+    else if (current !== null && index < current) status = 'completed';
+    else if (current !== null && index === current) status = 'current';
+    else if (current !== null && index === current + 1) status = 'next';
+    else if (current === null && index <= (options.completedThrough ?? -1))
+      status = 'completed';
+    else if (index === 5) status = 'optional';
+    const meta =
+      status === 'completed'
+        ? 'Visited'
+        : status === 'current'
+          ? `NOW · ${index === 4 ? '15 min' : index === 6 ? '35 min' : '20 min'}`
+          : status === 'next'
+            ? `NEXT · ${index === 5 ? 'Harbour Bus 992 · 18 min' : 'Walk · 14 min'}`
+            : status === 'optional'
+              ? 'OPTIONAL · 35 min'
+              : status === 'skipped'
+                ? 'Skipped · optional'
+                : status === 'saved'
+                  ? 'Saved for later'
+                  : `${index === 6 ? 'MUST · 35 min' : 'Planned stop'}`;
+    return {
+      name,
+      number: index + 1,
+      status,
+      meta,
+      selected: options.selected === index,
+    };
+  });
+}
+
+const cphTrip = (current: number, options: Partial<Trip> = {}): Trip => ({
+  current,
+  clock: current === 0 ? 600 : current === 4 ? 955 : 912,
+  started: true,
+  skipped: false,
+  saved: [],
+  extra: 0,
+  ended: false,
+  ...options,
+});
+
+const cphItinerary = cphPlan(3);
+
+const cphSkipped = cphPlan(7, { skipped: [5] });
 
 const romeItinerary = [
-  { name: 'Colosseum', status: 'current', meta: 'NOW · 60 min' },
-  { name: 'Roman Forum', status: 'next', meta: 'NEXT · Walk 8 min' },
-  { name: 'Pantheon', status: 'future', meta: 'MUST · 35 min' },
-  { name: 'Trevi Fountain', status: 'future', meta: 'MUST · 25 min' },
-  { name: 'Trastevere', status: 'optional', meta: 'OPTIONAL · 45 min' },
+  { name: 'Colosseum', number: 1, status: 'current', meta: 'NOW · 60 min' },
+  { name: 'Roman Forum', number: 2, status: 'next', meta: 'NEXT · Walk 8 min' },
+  { name: 'Pantheon', number: 3, status: 'future', meta: 'MUST · 35 min' },
+  {
+    name: 'Trevi Fountain',
+    number: 4,
+    status: 'future',
+    meta: 'MUST · 25 min',
+  },
+  {
+    name: 'Trastevere',
+    number: 5,
+    status: 'optional',
+    meta: 'OPTIONAL · 45 min',
+  },
 ];
 
 const states: BoardState[] = [
@@ -80,18 +156,17 @@ const states: BoardState[] = [
     kind: 'execution',
     health: 'Ready when you are',
     metric: 'Start at 10:00',
-    current: 'Nyhavn',
-    next: 'Amalienborg',
-    currentMeta: 'FIRST STOP · Waterfront · 30 min',
-    nextMeta: 'NEXT · Walk 12 min · 850 m',
+    firstStop: 'Nyhavn',
+    firstStopMeta: 'Waterfront · 30 min',
     description:
       'No Current exists before Start day. Starting is an explicit action.',
     actions: ['Start day', 'Start & navigate'],
-    itinerary: cphItinerary.map((stop, index) => ({
+    itinerary: cphPlan(null).map((stop, index) => ({
       ...stop,
-      status: index === 0 ? 'ready' : 'future',
+      status: index === 0 ? 'ready' : stop.status,
       meta: index === 0 ? 'FIRST STOP · 30 min' : stop.meta,
     })),
+    mapTrip: cphTrip(0, { started: false }),
     hardStop: 'Hard stop · 18:30',
   },
   {
@@ -110,6 +185,7 @@ const states: BoardState[] = [
       'The execution shell answers where, what now, what next, and what remains.',
     actions: ['Navigate', 'Done'],
     itinerary: cphItinerary,
+    mapTrip: cphTrip(3),
     hardStop: 'Hard stop · 18:30 · Est. finish 17:48',
   },
   {
@@ -128,6 +204,7 @@ const states: BoardState[] = [
       'Canonical mobile reference: the remaining plan stays below Current / Next in the same scroll.',
     actions: ['Navigate', 'Done'],
     itinerary: cphItinerary,
+    mapTrip: cphTrip(3),
     hardStop: 'Hard stop · 18:30 · Est. finish 17:48',
     note: 'Completed, current, next, future, optional and MUST are visible together.',
   },
@@ -146,7 +223,10 @@ const states: BoardState[] = [
     description:
       'Bottom sheet for Current. Navigate and Done are available only for the expected stop.',
     actions: ['Navigate', 'Done', 'Skip', 'Save for later'],
-    itinerary: cphItinerary,
+    itinerary: cphPlan(3, { selected: 3 }),
+    selectedStop: 'Kastellet',
+    selectedMeta: 'CURRENT · Expected stop · 20 min',
+    mapTrip: cphTrip(3),
     hardStop: 'Hard stop · 18:30',
   },
   {
@@ -165,6 +245,7 @@ const states: BoardState[] = [
       'Expanded map preserves the same Current, Next, GPS and route context. Back to day returns to the unchanged execution state.',
     actions: ['Back to day'],
     itinerary: cphItinerary,
+    mapTrip: cphTrip(3),
     hardStop: 'Hard stop · 18:30 · Est. finish 17:48',
     fullMap: true,
     note: 'GPS and Current remain distinct; completed, future, optional and MUST stops stay legible on the route.',
@@ -184,7 +265,10 @@ const states: BoardState[] = [
     description:
       'Future stops use bounded actions. Ordinary Navigate and Done do not appear here.',
     actions: ['Do now', 'Already visited', 'Skip', 'Save for later'],
-    itinerary: cphItinerary,
+    itinerary: cphPlan(3, { selected: 4 }),
+    selectedStop: 'Little Mermaid',
+    selectedMeta: 'FUTURE STOP · #5',
+    mapTrip: cphTrip(3),
     hardStop: 'Hard stop · 18:30',
     note: 'Already visited records early completion and preserves the route history.',
   },
@@ -203,11 +287,8 @@ const states: BoardState[] = [
     description:
       'The optional decision is explicit and bounded by the 18:30 hard stop.',
     actions: ['Skip Reffen', 'Keep it'],
-    itinerary: cphItinerary.map((stop) =>
-      stop.name === 'Kastellet'
-        ? { ...stop, status: 'completed', meta: 'Visited' }
-        : stop,
-    ),
+    itinerary: cphPlan(4),
+    mapTrip: cphTrip(4, { extra: 15 }),
     hardStop: 'Hard stop · 18:30 · Est. finish 18:12',
     note: 'Reffen adds about 40 min. Only 18 min of buffer remain before the 18:30 hard stop. Skip Reffen → restore ~35 min buffer.',
   },
@@ -226,7 +307,8 @@ const states: BoardState[] = [
     description:
       'Keep it is a persistent acknowledgement. The recommendation is dismissed and may reappear only at higher risk.',
     actions: ['Keep it acknowledged', 'Back to current'],
-    itinerary: cphItinerary,
+    itinerary: cphPlan(4),
+    mapTrip: cphTrip(4, { extra: 15 }),
     hardStop: 'Hard stop · 18:30',
     note: 'You chose to keep Reffen. RouteRunner keeps the decision visible in the schedule context.',
   },
@@ -240,12 +322,14 @@ const states: BoardState[] = [
     metric: '18 min over plan',
     current: 'Little Mermaid',
     next: 'Reffen',
-    currentMeta: 'NOW · Shorten visit to protect airport journey',
+    currentMeta: 'NOW · 15 min remaining',
     nextMeta: 'NEXT · Optional stop',
     description:
-      'At negative buffer, the app reports risk and offers End sightseeing. Nothing is auto-skipped.',
+      'At negative buffer, the app reports neutral risk information. Nothing is auto-skipped or newly prescribed.',
     actions: ['Navigate', 'Done', 'End sightseeing now'],
-    itinerary: cphItinerary,
+    itinerary: cphPlan(4),
+    mapTrip: cphTrip(4, { clock: 1005, extra: 15 }),
+    note: 'Projected finish is 18 min beyond the prepared 18:30 hard stop.',
     hardStop: 'Hard stop · 18:30 · Est. finish 18:48',
   },
   {
@@ -264,6 +348,7 @@ const states: BoardState[] = [
       'No false precision: controls stay available while timing estimates are temporarily unavailable.',
     actions: ['Navigate', 'Done'],
     itinerary: cphItinerary,
+    mapTrip: cphTrip(3),
     hardStop: 'Hard stop · 18:30 · Travel estimate unavailable',
     note: 'Travel time unknown. RouteRunner will restore schedule context when an estimate is available.',
   },
@@ -283,6 +368,7 @@ const states: BoardState[] = [
       'A loading / degradation presentation keeps the route usable without inventing ETA, buffer, or recovery minutes.',
     actions: ['Navigate', 'Done'],
     itinerary: cphItinerary,
+    mapTrip: cphTrip(3),
     hardStop: 'Hard stop · 18:30 · Estimate unavailable',
     note: 'Loading route estimate… Travel time unknown. Current actions remain available.',
   },
@@ -302,6 +388,7 @@ const states: BoardState[] = [
       'A timed-stop alert is separate from overall schedule health; both facts remain visible together.',
     actions: ['Navigate', 'Done'],
     itinerary: cphItinerary,
+    mapTrip: cphTrip(3),
     hardStop: 'Hard stop · 18:30 · Est. finish 17:48',
     timedAlert: 'Reffen arrival · Projected 12 min late',
   },
@@ -318,7 +405,8 @@ const states: BoardState[] = [
     description:
       'The hard deadline is a clear decision point. It never auto-completes or silently skips stops.',
     actions: ['End sightseeing', 'Keep going'],
-    itinerary: cphItinerary,
+    itinerary: cphPlan(6),
+    mapTrip: cphTrip(6, { clock: 1110 }),
     hardStop: 'Hard stop reached · 18:30',
   },
   {
@@ -329,14 +417,15 @@ const states: BoardState[] = [
     kind: 'resolution',
     health: 'End day',
     metric: '2 stops remain',
-    current: 'No Current',
+    current: undefined,
     currentMeta: 'Resolve leftovers before ending',
     description:
       'Ending the day surfaces an explicit bounded resolution for remaining work.',
     actions: ['Save all for later', 'Review individually', 'Cancel'],
-    itinerary: cphItinerary.map((stop, index) =>
-      index > 3 ? { ...stop, status: 'future', meta: 'Remaining' } : stop,
+    itinerary: cphPlan(null, { completedThrough: 3 }).map((stop, index) =>
+      index > 3 ? { ...stop, meta: 'Remaining' } : stop,
     ),
+    mapTrip: cphTrip(4, { ended: true }),
     hardStop: 'Hard stop · 18:30',
     note: '2 stops remain from Day 1. Choose how to resolve them before the day ends.',
   },
@@ -358,6 +447,7 @@ const states: BoardState[] = [
       status: stop.status === 'skipped' ? 'skipped' : 'completed',
       meta: stop.status === 'skipped' ? stop.meta : 'Visited',
     })),
+    mapTrip: cphTrip(7, { skipped: true }),
     hardStop: 'Sightseeing ended · Airport after sightseeing',
   },
   {
@@ -374,7 +464,12 @@ const states: BoardState[] = [
       'Saved for later is separate from the active route and excluded from ETA / buffer.',
     actions: ['Do now', 'Already visited'],
     itinerary: [
-      { name: 'Reffen', status: 'saved', meta: 'Saved for later · Optional' },
+      {
+        name: 'Reffen',
+        number: 6,
+        status: 'saved',
+        meta: 'Saved for later · Optional',
+      },
     ],
     note: 'For Later points are neutral on the map and do not block completion.',
   },
@@ -393,11 +488,8 @@ const states: BoardState[] = [
     description:
       'Saving Current removes it from the active route without implying that it was reached.',
     actions: ['Navigate', 'Done'],
-    itinerary: cphSkipped.map((stop) =>
-      stop.name === 'Kastellet'
-        ? { ...stop, status: 'saved', meta: 'Saved for later' }
-        : stop,
-    ),
+    itinerary: cphPlan(4, { saved: [3] }),
+    mapTrip: cphTrip(4, { saved: [3] }),
     note: 'Kastellet saved for later · Little Mermaid is now Current.',
     hardStop: 'Hard stop · 18:30',
   },
@@ -406,17 +498,16 @@ const states: BoardState[] = [
     title: 'Rome · Trip overview',
     city: 'Rome',
     day: '2 days · Day 1 active',
-    kind: 'execution',
-    metric: 'Estimated finish · 17:20',
-    current: 'Colosseum',
-    next: 'Roman Forum',
-    currentMeta: 'NOW · Explore · 60 min',
-    nextMeta: 'NEXT · Walk 8 min',
+    kind: 'overview',
+    metric: '2 days',
     description:
       'Rome uses the same execution shell across a multi-day trip, with an explicit active day.',
-    actions: ['Navigate', 'Done'],
-    itinerary: romeItinerary,
-    note: 'Day 1 of 2 · Return to this active day after previewing tomorrow.',
+    actions: ['Open Day 1', 'Preview Day 2'],
+    itinerary: [
+      { name: 'Day 1', status: 'current', meta: 'ACTIVE · 5 stops' },
+      { name: 'Day 2', status: 'future', meta: 'PREPARED · 3 stops' },
+    ],
+    note: 'Trip overview opens a prepared day without editing the plan.',
   },
   {
     id: 'rome-preview',
@@ -425,16 +516,31 @@ const states: BoardState[] = [
     day: 'Day 2 · Preview',
     kind: 'preview',
     metric: 'Preview · not executing',
-    current: 'No Current',
+    current: 'Colosseum',
     next: 'Vatican Museums',
     nextMeta: 'NEXT ON DAY 2 · Metro 18 min',
     description:
       'A viewed day is clearly a preview. Day 1 remains the active execution day.',
     actions: ['Return to active Day 1'],
     itinerary: [
-      { name: 'Vatican Museums', status: 'future', meta: 'MUST · 2h' },
-      { name: 'Piazza Navona', status: 'future', meta: 'MUST · 30 min' },
-      { name: 'Villa Borghese', status: 'optional', meta: 'OPTIONAL · 45 min' },
+      {
+        name: 'Vatican Museums',
+        number: 1,
+        status: 'future',
+        meta: 'MUST · 2h',
+      },
+      {
+        name: 'Piazza Navona',
+        number: 2,
+        status: 'future',
+        meta: 'MUST · 30 min',
+      },
+      {
+        name: 'Villa Borghese',
+        number: 3,
+        status: 'optional',
+        meta: 'OPTIONAL · 45 min',
+      },
     ],
     note: 'Day 2 preview · Day 1 still executing in the background of this prototype.',
   },
@@ -446,23 +552,31 @@ const states: BoardState[] = [
     kind: 'sheet',
     metric: 'Estimated finish · 17:20',
     current: 'Colosseum',
-    next: 'Roman Forum',
+    next: 'Pantheon',
     currentMeta: 'NOW · Explore · 60 min',
-    nextMeta: 'NEXT · Walk 8 min',
+    nextMeta: 'QUEUED FOR NOW · after Current',
     description:
       'Do now queues a future stop after Current in FIFO order. Duplicate Do now is unavailable.',
     actions: ['Cancel Do Now'],
     itinerary: [
-      { name: 'Colosseum', status: 'current', meta: 'NOW · 60 min' },
+      { name: 'Colosseum', number: 1, status: 'current', meta: 'NOW · 60 min' },
+      {
+        name: 'Pantheon',
+        number: 3,
+        status: 'queued',
+        meta: 'QUEUED FOR NOW · NEXT',
+      },
       {
         name: 'Roman Forum',
-        status: 'queued',
-        meta: 'QUEUED FOR NOW · Cancel',
+        number: 2,
+        status: 'future',
+        meta: 'Returns after queued stop',
       },
-      { name: 'Pantheon', status: 'future', meta: 'Future' },
-      { name: 'Trevi Fountain', status: 'future', meta: 'Future' },
+      { name: 'Trevi Fountain', number: 4, status: 'future', meta: 'Future' },
     ],
-    note: 'Queued for now · Roman Forum will follow Colosseum. Multiple queued stops remain FIFO.',
+    selectedStop: 'Pantheon',
+    selectedMeta: 'Queued for now',
+    note: 'Queued for now · Pantheon will follow Colosseum. It is not Current.',
   },
   {
     id: 'rome-visited',
@@ -480,9 +594,16 @@ const states: BoardState[] = [
     actions: ['Already visited'],
     itinerary: romeItinerary.map((stop) =>
       stop.name === 'Pantheon'
-        ? { ...stop, status: 'visited-early', meta: 'Already visited on Day 1' }
+        ? {
+            ...stop,
+            status: 'visited-early',
+            meta: 'Already visited on Day 1',
+            selected: true,
+          }
         : stop,
     ),
+    selectedStop: 'Pantheon',
+    selectedMeta: 'ALREADY VISITED · #3',
     note: 'Pantheon · Already visited on Day 1. The visit remains in trip history.',
   },
   {
@@ -540,7 +661,11 @@ const states: BoardState[] = [
       'A zero-work day has its own calm empty state and an explicit End day action.',
     actions: ['Do now from For Later', 'End day'],
     itinerary: [
-      { name: 'For Later', status: 'saved', meta: '1 saved stop · Do now' },
+      {
+        name: 'For Later',
+        status: 'saved',
+        meta: '1 saved stop · Do now',
+      },
     ],
     note: 'No Current is shown. Saved stops can be reintroduced with Do now.',
   },
@@ -557,7 +682,12 @@ const states: BoardState[] = [
       'Final-day zero work does not show Trip Complete on entry. The user must end the day.',
     actions: ['Do now from For Later', 'End day'],
     itinerary: [
-      { name: 'Reffen', status: 'saved', meta: 'Saved for later · 1 stop' },
+      {
+        name: 'Villa Borghese',
+        number: 3,
+        status: 'saved',
+        meta: 'Saved for later · 1 stop',
+      },
     ],
     note: 'For Later is available, but it does not block completion.',
   },
@@ -647,14 +777,7 @@ function BoardMap({
     );
   }
   if (state.city === 'Copenhagen') {
-    let trip: Trip = normal();
-    if (state.id === 'cph-ready') trip = scenario('A');
-    if (state.id === 'cph-tight' || state.id === 'cph-keep')
-      trip = scenario('C');
-    if (state.id === 'cph-risk') trip = scenario('risk');
-    if (state.id === 'cph-complete') trip = scenario('complete');
-    if (state.id === 'for-later' || state.id === 'save-current')
-      trip = scenario('F');
+    const trip: Trip = state.mapTrip ?? normal();
     return <RouteMap trip={trip} onStop={onStop} full={state.fullMap} />;
   }
   const pins = state.itinerary.slice(0, 5);
@@ -683,7 +806,11 @@ function BoardMap({
           onClick={onStop}
           aria-label={`${pin.name}, ${pin.status}`}
         >
-          {pin.status === 'completed' ? <Check size={13} /> : index + 1}
+          {pin.status === 'completed' || pin.status === 'visited-early' ? (
+            <Check size={13} />
+          ) : (
+            (pin.number ?? index + 1)
+          )}
         </button>
       ))}
       <span className="board-map-caption">Schematic map · demo location</span>
@@ -691,13 +818,12 @@ function BoardMap({
   );
 }
 
-function StatusGlyph({ status }: { status: string }) {
+function StatusGlyph({ status, number }: { status: string; number?: number }) {
   if (status === 'completed' || status === 'visited-early')
     return <Check size={15} />;
   if (status === 'skipped') return <span>−</span>;
-  if (status === 'optional' || status === 'saved') return <span>◇</span>;
-  if (status === 'queued') return <span>↗</span>;
-  return <span>○</span>;
+  if (status === 'saved') return <span>◇</span>;
+  return <span>{number ?? (status === 'queued' ? '↗' : '○')}</span>;
 }
 
 function PreviewButton({
@@ -737,14 +863,14 @@ function Itinerary({
         {items.map((item, index) => (
           <li
             key={`${item.name}-${index}`}
-            className={`board-itinerary-item ${item.status}`}
+            className={`board-itinerary-item ${item.status}${item.selected ? ' selected' : ''}`}
           >
             <button
               onClick={onStop}
               aria-label={`${item.name}, ${item.status}`}
             >
               <span className="board-stop-number">
-                <StatusGlyph status={item.status} />
+                <StatusGlyph status={item.status} number={item.number} />
               </span>
               <span className="board-stop-copy">
                 <strong>{item.name}</strong>
@@ -793,11 +919,31 @@ function StatePreview({
   onFeedback: (value: string) => void;
 }) {
   const isCph = state.city === 'Copenhagen';
+  const isReady = state.id === 'cph-ready';
+  const isPreview = state.kind === 'preview';
+  const isOverview = state.kind === 'overview';
   const [sheetOpen, setSheetOpen] = useState(state.kind === 'sheet');
   const [decision, setDecision] = useState<'skip' | 'keep' | ''>('');
   const [resolved, setResolved] = useState(false);
   const isNoCurrent = !state.current || state.current === 'No Current';
   const isFullMap = Boolean(state.fullMap);
+  const currentNumber = state.itinerary.find(
+    (item) => item.name === (isReady ? state.firstStop : state.current),
+  )?.number;
+  const displayClock =
+    state.id === 'cph-ready'
+      ? '10:00'
+      : ['cph-tight', 'cph-keep', 'save-current'].includes(state.id)
+        ? '15:55'
+        : state.id === 'cph-risk'
+          ? '16:45'
+          : ['cph-hard-stop', 'cph-leftovers'].includes(state.id)
+            ? '18:30'
+            : state.id === 'cph-complete'
+              ? '17:48'
+              : isCph
+                ? '15:12'
+                : '11:05';
   const statusText = state.health ?? 'Preview';
   const action = (label: string) => {
     if (label === 'Skip Reffen') {
@@ -876,7 +1022,7 @@ function StatePreview({
           </div>
         )}
       </div>
-      {isFullMap && (
+      {isFullMap && !isOverview && (
         <div className="phone-full-map-header">
           <button onClick={() => action('Back to day')}>
             <ArrowRight size={15} /> Back to day
@@ -885,144 +1031,192 @@ function StatePreview({
           <span>Hard stop · 18:30</span>
         </div>
       )}
-      <BoardMap state={state} onStop={() => setSheetOpen(true)} />
-      <section className={`phone-execution ${isNoCurrent ? 'no-current' : ''}`}>
-        <div className="phone-execution-top">
-          <span className="phone-label">
-            {isNoCurrent
-              ? 'NO CURRENT'
-              : state.kind === 'preview'
-                ? 'PREVIEW'
-                : state.kind === 'complete'
-                  ? 'COMPLETE'
-                  : 'NOW'}
-          </span>
-          <span className="phone-clock">
-            <Clock size={13} />
-            {isCph ? '15:12' : '11:05'}
-          </span>
-        </div>
-        <div className="phone-current-row">
-          <span className="phone-big-number">
-            {isNoCurrent ? (
-              '—'
-            ) : state.kind === 'complete' ? (
-              <Check size={22} />
-            ) : (
-              '4'
-            )}
-          </span>
-          <div>
-            <h3>{state.current ?? 'No Current'}</h3>
-            <p>{state.currentMeta ?? state.description}</p>
-          </div>
-          {!isNoCurrent && state.kind !== 'complete' && (
-            <ChevronRight size={18} />
-          )}
-        </div>
-        {state.next && (
-          <div className="phone-next-row">
-            <span className="phone-next-arrow">
-              <ArrowRight size={17} />
+      {isOverview ? (
+        <section className="phone-trip-overview">
+          <p className="board-eyebrow">TRIP OVERVIEW</p>
+          <h3>Rome</h3>
+          <p className="trip-overview-count">2 days</p>
+          <article>
+            <div>
+              <strong>Day 1</strong>
+              <span>Active · 5 stops</span>
+            </div>
+            <PreviewButton
+              label="Open day"
+              primary
+              onClick={() => action('Open Day 1')}
+            />
+          </article>
+          <article>
+            <div>
+              <strong>Day 2</strong>
+              <span>Prepared · 3 stops</span>
+            </div>
+            <PreviewButton
+              label="Preview"
+              onClick={() => action('Preview Day 2')}
+            />
+          </article>
+        </section>
+      ) : (
+        <BoardMap state={state} onStop={() => setSheetOpen(true)} />
+      )}
+      {!isOverview && (
+        <section
+          className={`phone-execution ${isNoCurrent ? 'no-current' : ''}`}
+        >
+          <div className="phone-execution-top">
+            <span className="phone-label">
+              {isReady
+                ? 'FIRST STOP'
+                : isPreview
+                  ? 'DAY 2 PREVIEW'
+                  : isNoCurrent
+                    ? 'NO CURRENT'
+                    : state.kind === 'complete'
+                      ? 'COMPLETE'
+                      : 'NOW'}
             </span>
-            <div>
-              <p className="board-eyebrow">NEXT</p>
-              <h4>{state.next}</h4>
-              <p>
-                <Footprints size={13} /> {state.nextMeta}
-              </p>
-            </div>
-            <ChevronRight size={17} />
-          </div>
-        )}
-        {!showDecision && !isFullMap && (
-          <div className="phone-actions">
-            {visibleActions.slice(0, 2).map((label) => (
-              <PreviewButton
-                key={label}
-                label={label}
-                primary={
-                  label === 'Done' ||
-                  label === 'Start day' ||
-                  label === 'Airport directions'
-                }
-                onClick={() => action(label)}
-              />
-            ))}
-          </div>
-        )}
-        {!showDecision && !isFullMap && visibleActions.length > 2 && (
-          <div className="phone-secondary-actions">
-            {visibleActions.slice(2).map((label) => (
-              <button key={label} onClick={() => action(label)}>
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
-        {showDecision && (
-          <div className="phone-decision">
-            <strong>◇ A little more breathing room</strong>
-            <p>
-              Reffen adds about 40 min. Only 18 min of buffer remain before the
-              18:30 hard stop.
-            </p>
-            <div>
-              <PreviewButton
-                label="Skip Reffen"
-                primary
-                onClick={() => action('Skip Reffen')}
-              />
-              <button onClick={() => action('Keep it')}>Keep it</button>
-            </div>
-            <small>Skip Reffen → restore ~35 min buffer.</small>
-          </div>
-        )}
-        {state.kind === 'resolution' && (
-          <div className={`phone-resolution ${resolved ? 'resolved' : ''}`}>
-            <strong>{resolved ? 'Resolution saved' : state.metric}</strong>
-            <p>{state.note ?? 'Choose one bounded action to continue.'}</p>
-          </div>
-        )}
-        {state.timedAlert && (
-          <div className="phone-timed-alert">
-            <Clock size={14} />
-            <div>
-              <strong>Timed stop</strong>
-              <span>{state.timedAlert}</span>
-            </div>
-          </div>
-        )}
-        {feedback && <output className="phone-feedback">{feedback}</output>}
-        <div className="phone-deadline">
-          {state.hardStop ? (
-            <span>
-              <Flag size={13} /> {state.hardStop}
+            <span className="phone-clock">
+              <Clock size={13} />
+              {displayClock}
             </span>
+          </div>
+          {isPreview ? (
+            <div className="phone-preview-context">
+              <strong>Not executing</strong>
+              <p>Day 1 remains active · Current: {state.current}</p>
+            </div>
           ) : (
-            <span>
-              <Clock size={13} /> {state.metric}
-            </span>
+            <div className="phone-current-row">
+              <span className="phone-big-number">
+                {isReady ? (
+                  (currentNumber ?? 1)
+                ) : isNoCurrent ? (
+                  '—'
+                ) : state.kind === 'complete' ? (
+                  <Check size={22} />
+                ) : (
+                  (currentNumber ?? '—')
+                )}
+              </span>
+              <div>
+                <h3>
+                  {isReady ? state.firstStop : (state.current ?? 'No Current')}
+                </h3>
+                <p>
+                  {isReady
+                    ? state.firstStopMeta
+                    : (state.currentMeta ?? state.description)}
+                </p>
+              </div>
+              {!isNoCurrent && state.kind !== 'complete' && !isReady && (
+                <ChevronRight size={18} />
+              )}
+            </div>
           )}
-          <span>
-            {state.city === 'Rome'
-              ? 'Estimated finish · 17:20'
-              : 'Route context'}
-          </span>
-        </div>
-      </section>
-      <Itinerary items={state.itinerary} onStop={() => setSheetOpen(true)} />
+          {state.next && !isPreview && !isReady && (
+            <div className="phone-next-row">
+              <span className="phone-next-arrow">
+                <ArrowRight size={17} />
+              </span>
+              <div>
+                <p className="board-eyebrow">NEXT</p>
+                <h4>{state.next}</h4>
+                <p>
+                  <Footprints size={13} /> {state.nextMeta}
+                </p>
+              </div>
+              <ChevronRight size={17} />
+            </div>
+          )}
+          {!showDecision && !isFullMap && (
+            <div className="phone-actions">
+              {visibleActions.slice(0, 2).map((label) => (
+                <PreviewButton
+                  key={label}
+                  label={label}
+                  primary={
+                    label === 'Done' ||
+                    label === 'Start day' ||
+                    label === 'Airport directions'
+                  }
+                  onClick={() => action(label)}
+                />
+              ))}
+            </div>
+          )}
+          {!showDecision && !isFullMap && visibleActions.length > 2 && (
+            <div className="phone-secondary-actions">
+              {visibleActions.slice(2).map((label) => (
+                <button key={label} onClick={() => action(label)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {showDecision && (
+            <div className="phone-decision">
+              <strong>◇ A little more breathing room</strong>
+              <p>
+                Reffen adds about 40 min. Only 18 min of buffer remain before
+                the 18:30 hard stop.
+              </p>
+              <div>
+                <PreviewButton
+                  label="Skip Reffen"
+                  primary
+                  onClick={() => action('Skip Reffen')}
+                />
+                <button onClick={() => action('Keep it')}>Keep it</button>
+              </div>
+              <small>Skip Reffen → restore ~35 min buffer.</small>
+            </div>
+          )}
+          {state.kind === 'resolution' && (
+            <div className={`phone-resolution ${resolved ? 'resolved' : ''}`}>
+              <strong>{resolved ? 'Resolution saved' : state.metric}</strong>
+              <p>{state.note ?? 'Choose one bounded action to continue.'}</p>
+            </div>
+          )}
+          {state.timedAlert && (
+            <div className="phone-timed-alert">
+              <Clock size={14} />
+              <div>
+                <strong>Timed stop</strong>
+                <span>{state.timedAlert}</span>
+              </div>
+            </div>
+          )}
+          {feedback && <output className="phone-feedback">{feedback}</output>}
+          <div className="phone-deadline">
+            {state.hardStop ? (
+              <span>
+                <Flag size={13} /> {state.hardStop}
+              </span>
+            ) : (
+              <span>
+                <Clock size={13} /> {state.metric}
+              </span>
+            )}
+            <span>
+              {state.city === 'Rome'
+                ? 'Estimated finish · 17:20'
+                : 'Route context'}
+            </span>
+          </div>
+        </section>
+      )}
+      {!isOverview && (
+        <Itinerary items={state.itinerary} onStop={() => setSheetOpen(true)} />
+      )}
       {sheetOpen && state.kind === 'sheet' && (
         <div className="phone-sheet-preview">
           <div className="sheet-handle" />
           <p className="board-eyebrow">
-            STOP DETAILS · {state.current ?? state.next}
+            STOP DETAILS · {state.selectedMeta ?? 'SELECTED STOP'}
           </p>
-          <h3>
-            {state.next && state.title.includes('future')
-              ? state.next
-              : state.current}
-          </h3>
+          <h3>{state.selectedStop ?? state.current ?? state.next}</h3>
           <p>{state.description}</p>
           <div className="sheet-actions">
             {state.actions.slice(0, 2).map((label) => (

@@ -38,9 +38,10 @@ import {
   SelectContent,
   SelectItem,
 } from '@/components/ui/select';
-import RouteMap from './route-map';
+import RouteMap from '@/components/routerunner/route-map';
 import {
   stops,
+  demoScenarios,
   normal,
   scenario,
   time,
@@ -50,17 +51,7 @@ import {
   advance,
   skipReffen,
   stopStatus,
-} from './trip';
-const scenarios = [
-  ['A', 'A · Trip start'],
-  ['B', 'B · Normal execution'],
-  ['C', 'C · Schedule tight'],
-  ['F', 'F · Reffen skipped · back on plan'],
-  ['D', 'D · Fullscreen map'],
-  ['E', 'E · Stop expanded'],
-  ['risk', 'Deadline at risk'],
-  ['complete', 'Trip completed'],
-];
+} from '@/design-reference/copenhagen-fixtures';
 function Mode({ mode, size = 16 }: { mode: string; size?: number }) {
   return mode === 'ferry' ? (
     <Ship size={size} />
@@ -197,11 +188,11 @@ export default function Page() {
               aria-label="Preview design state"
             >
               <SelectValue>
-                {scenarios.find((x) => x[0] === demo)?.[1]}
+                {demoScenarios.find((x) => x[0] === demo)?.[1]}
               </SelectValue>
             </SelectTrigger>
             <SelectContent align="end">
-              {scenarios.map(([value, label]) => (
+              {demoScenarios.map(([value, label]) => (
                 <SelectItem
                   key={value}
                   value={value}
@@ -262,7 +253,7 @@ export default function Page() {
         <div className="workspace">
           <div className="map-column">
             <section className="map-panel">
-              <RouteMap trip={trip} onStop={setDetail} />
+              <RouteMap stops={stops} trip={trip} onStop={setDetail} />
               <button className="map-expand" onClick={() => setFull(true)}>
                 <Expand size={17} />
                 Full map
@@ -563,7 +554,7 @@ export default function Page() {
             Full route map. Closing returns to your unchanged trip state.
           </DialogDescription>
           <div className="full-map-body">
-            <RouteMap trip={trip} onStop={setDetail} full />
+            <RouteMap stops={stops} trip={trip} onStop={setDetail} full />
           </div>
           <div className="full-bottom">
             <div>

@@ -91,6 +91,18 @@ export const stops = [
     lng: 12.5977,
   },
 ] as const;
+
+export const demoScenarios = [
+  ['A', 'A · Trip start'],
+  ['B', 'B · Normal execution'],
+  ['C', 'C · Schedule tight'],
+  ['F', 'F · Reffen skipped · back on plan'],
+  ['D', 'D · Fullscreen map'],
+  ['E', 'E · Stop expanded'],
+  ['risk', 'Deadline at risk'],
+  ['complete', 'Trip completed'],
+] as const;
+
 export type Trip = {
   current: number;
   clock: number;

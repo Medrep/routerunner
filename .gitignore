@@ -37,3 +37,6 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+# Frozen review evidence is retained outside the source history.
+/artifacts/rr-02-design/

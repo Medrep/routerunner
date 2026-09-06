@@ -14,8 +14,12 @@ import {
   Ship,
   TrainFront,
 } from 'lucide-react';
-import RouteMap from '../route-map';
-import { normal, type Trip } from '../trip';
+import RouteMap from '@/components/routerunner/route-map';
+import {
+  normal,
+  stops,
+  type Trip,
+} from '@/design-reference/copenhagen-fixtures';
 
 type StateKind =
   | 'execution'
@@ -778,7 +782,14 @@ function BoardMap({
   }
   if (state.city === 'Copenhagen') {
     const trip: Trip = state.mapTrip ?? normal();
-    return <RouteMap trip={trip} onStop={onStop} full={state.fullMap} />;
+    return (
+      <RouteMap
+        stops={stops}
+        trip={trip}
+        onStop={onStop}
+        full={state.fullMap}
+      />
+    );
   }
   const pins = state.itinerary.slice(0, 5);
   return (

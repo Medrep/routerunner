@@ -1,20 +1,51 @@
 'use client';
 import { useState } from 'react';
 import { Crosshair, Minus, Plus } from 'lucide-react';
-import { stops, stopStatus, type Trip } from './trip';
+
+export type RouteMapStop = {
+  name: string;
+  kind: string;
+  x: number;
+  y: number;
+};
+
+export type RouteMapState = {
+  current: number;
+  started: boolean;
+  skipped: boolean;
+  saved: number[];
+  ended: boolean;
+};
+
 export default function RouteMap({
+  stops,
   trip,
   onStop,
   full = false,
 }: {
-  trip: Trip;
+  stops: readonly RouteMapStop[];
+  trip: RouteMapState;
   onStop: (i: number) => void;
   full?: boolean;
 }) {
   const [zoom, setZoom] = useState(1);
   const [center, setCenter] = useState([280, 270]);
   const size = 560 / zoom;
-  const status = (i: number) => stopStatus(i, trip);
+  const status = (i: number) => {
+    if (trip.saved.includes(i)) return 'saved';
+    if (i === 5 && trip.skipped) return 'skipped';
+    if (i < trip.current) return 'completed';
+    if (!trip.started || trip.ended) return 'future';
+    if (i === trip.current) return 'current';
+    let next = trip.current + 1;
+    while (
+      next < stops.length &&
+      ((next === 5 && trip.skipped) || trip.saved.includes(next))
+    )
+      next++;
+    if (i === next) return 'next';
+    return 'future';
+  };
   const gps = stops[Math.min(trip.current, 6)];
   const roads = [
     'M0 105L330 340',

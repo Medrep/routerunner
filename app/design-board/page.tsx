@@ -654,7 +654,7 @@ const states: BoardState[] = [
     city: 'Rome',
     day: 'Day 2 · Nothing scheduled',
     kind: 'zero',
-    metric: 'No stops today',
+    metric: 'Nothing scheduled remains for today',
     current: 'No Current',
     currentMeta: 'There is no active route for this day',
     description:
@@ -675,7 +675,7 @@ const states: BoardState[] = [
     city: 'Rome',
     day: 'Day 2 · Final day',
     kind: 'zero',
-    metric: 'No stops today',
+    metric: 'Nothing scheduled remains for today',
     current: 'No Current',
     currentMeta: 'Explicit End day completes the trip',
     description:
@@ -927,6 +927,10 @@ function StatePreview({
   const [resolved, setResolved] = useState(false);
   const isNoCurrent = !state.current || state.current === 'No Current';
   const isFullMap = Boolean(state.fullMap);
+  const suppressExecutionProjection =
+    state.kind === 'complete' ||
+    state.kind === 'zero' ||
+    state.id === 'rome-start-day2-leftovers';
   const currentNumber = state.itinerary.find(
     (item) => item.name === (isReady ? state.firstStop : state.current),
   )?.number;
@@ -1189,22 +1193,24 @@ function StatePreview({
             </div>
           )}
           {feedback && <output className="phone-feedback">{feedback}</output>}
-          <div className="phone-deadline">
-            {state.hardStop ? (
+          {!suppressExecutionProjection && (
+            <div className="phone-deadline">
+              {state.hardStop ? (
+                <span>
+                  <Flag size={13} /> {state.hardStop}
+                </span>
+              ) : (
+                <span>
+                  <Clock size={13} /> {state.metric}
+                </span>
+              )}
               <span>
-                <Flag size={13} /> {state.hardStop}
+                {state.city === 'Rome'
+                  ? 'Estimated finish · 17:20'
+                  : 'Route context'}
               </span>
-            ) : (
-              <span>
-                <Clock size={13} /> {state.metric}
-              </span>
-            )}
-            <span>
-              {state.city === 'Rome'
-                ? 'Estimated finish · 17:20'
-                : 'Route context'}
-            </span>
-          </div>
+            </div>
+          )}
         </section>
       )}
       {!isOverview && (

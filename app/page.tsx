@@ -1,58 +1,75 @@
 'use client';
+
 import { useState } from 'react';
 import {
-  ArrowUpRight,
-  ArrowRight,
   ArrowLeft,
+  ArrowRight,
   Check,
   ChevronRight,
   Clock,
   Expand,
+  Flag,
   Footprints,
+  MapPin,
+  Plane,
   Route,
   Ship,
   TrainFront,
-  Plane,
-  Flag,
-  MapPin,
   X,
 } from 'lucide-react';
 import {
-  Sheet,
-  SheetContent,
-  SheetTitle,
-  SheetDescription,
-  SheetClose,
-} from '@/components/ui/sheet';
-import {
   Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
   DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
 } from '@/components/ui/dialog';
+import RouteMap, {
+  type RouteMapState,
+  type RouteMapStop,
+} from '@/components/routerunner/route-map';
 import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from '@/components/ui/select';
-import RouteMap from '@/components/routerunner/route-map';
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { copenhagenStopIds, copenhagenTrip } from '@/data/trips/copenhagen';
 import {
-  stops,
-  demoScenarios,
-  normal,
-  scenario,
-  time,
-  nextIndex,
-  leg,
-  remaining,
-  advance,
-  skipReffen,
-  stopStatus,
-} from '@/design-reference/copenhagen-fixtures';
-function Mode({ mode, size = 16 }: { mode: string; size?: number }) {
+  completeCurrentStop,
+  createInitialTripExecutionState,
+  nextEligiblePendingStopId,
+  saveCurrentForLater as saveCurrentForLaterTransition,
+  skipCurrentStop,
+  startDay,
+  type Stop,
+  type StopId,
+  type TransitionResult,
+  type TravelMode,
+  type TripExecutionState,
+} from '@/domain';
+
+type PresentationStatus = NonNullable<RouteMapState['statuses']>[number];
+
+const day = copenhagenTrip.days[0];
+const mapPositions = [
+  { x: 215, y: 374 },
+  { x: 232, y: 285 },
+  { x: 171, y: 249 },
+  { x: 247, y: 161 },
+  { x: 316, y: 111 },
+  { x: 449, y: 174 },
+  { x: 367, y: 428 },
+] as const;
+
+const mapStops: RouteMapStop[] = copenhagenTrip.stops.map((stop, index) => ({
+  name: stop.name,
+  kind: stop.priority === 'optional' ? 'optional' : stop.priority,
+  ...mapPositions[index],
+}));
+
+function Mode({ mode, size = 16 }: { mode: TravelMode; size?: number }) {
   return mode === 'ferry' ? (
     <Ship size={size} />
   ) : mode === 'transit' ? (
@@ -61,148 +78,171 @@ function Mode({ mode, size = 16 }: { mode: string; size?: number }) {
     <Footprints size={size} />
   );
 }
+
+function priorityLabel(stop: Stop) {
+  if (stop.priority === 'must') return 'Must-see';
+  if (stop.priority === 'optional') return 'Optional';
+  return 'Part of your route';
+}
+
 export default function Page() {
-  const [trip, setTrip] = useState(normal);
-  const [demo, setDemo] = useState('B');
+  const [execution, setExecution] = useState<TripExecutionState>(() =>
+    createInitialTripExecutionState(copenhagenTrip, new Date().toISOString()),
+  );
   const [full, setFull] = useState(false);
   const [detail, setDetail] = useState<number | null>(null);
-  const [kept, setKept] = useState(false);
   const [feedback, setFeedback] = useState('');
-  const [skipNotice, setSkipNotice] = useState<'brief' | 'on-plan' | ''>('');
-  const finished = trip.current >= 7 || trip.ended;
-  const current = stops[Math.min(trip.current, 6)];
-  const next = nextIndex(trip);
-  const upcoming = next < 7 ? stops[next] : null;
-  const nextLeg = next < 7 ? leg(next, trip) : null;
-  const buffer = trip.skipped ? 35 : 1110 - trip.clock - remaining(trip);
-  const tight = buffer <= 20 && !finished;
-  const risk = buffer < 0 && !finished;
-  const endTime = 1110 - buffer;
-  const canSkip = !trip.skipped && trip.current <= 5 && !finished;
-  function preview(key: string) {
-    setDemo(key);
-    setFeedback('');
-    setSkipNotice('');
-    if (key === 'D') {
-      setFull(true);
-      return;
-    }
-    if (key === 'E') {
-      setDetail(Math.min(trip.current, 6));
-      return;
-    }
-    setTrip(scenario(key));
-    setKept(false);
-    setFull(false);
-    setDetail(null);
-  }
-  function done() {
-    setTrip((t) => advance(t));
-    setFeedback(
-      trip.started
-        ? `${current.name} completed. ${upcoming ? `${upcoming.name} is now your current stop.` : 'Your sightseeing is complete.'}`
-        : 'Your day starts at Nyhavn.',
-    );
-  }
-  function startAndNavigate() {
-    setTrip((t) => advance(t));
-    setFeedback('Day started. Opening directions to Nyhavn.');
-    window.open(navHref(0), '_blank', 'noopener,noreferrer');
-  }
-  function saveCurrentForLater() {
-    const savedIndex = trip.current;
-    const savedName = current.name;
-    const savedStops = trip.saved.includes(savedIndex)
-      ? trip.saved
-      : [...trip.saved, savedIndex];
-    const promoted = nextIndex({ ...trip, saved: savedStops });
-    setTrip((t) => {
-      const nextSaved = t.saved.includes(t.current)
-        ? t.saved
-        : [...t.saved, t.current];
-      return {
-        ...t,
-        saved: nextSaved,
-        current: nextIndex({ ...t, saved: nextSaved }),
-      };
-    });
-    if (promoted >= 7) {
-      setFeedback(`${savedName} saved for later. No Current remains.`);
-    } else {
-      setFeedback(
-        `${savedName} saved for later. ${stops[promoted].name} is now Current.`,
-      );
-    }
-    setDetail(null);
-  }
-  function futureAction(label: string, index: number) {
-    setFeedback(`${stops[index].name} · ${label}`);
-    setDetail(null);
-  }
-  function skip() {
-    setTrip((t) => skipReffen(t));
-    setDemo('F');
-    setSkipNotice('brief');
-    setFeedback('Reffen skipped · +17 min buffer');
-    window.setTimeout(() => {
-      setSkipNotice('on-plan');
-      setFeedback('Back on plan · 35 min buffer');
-    }, 1500);
-    setDetail(null);
-  }
-  function navHref(index: number) {
-    const s = stops[index];
-    return `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}&travelmode=${s.mode === 'walk' ? 'walking' : 'transit'}`;
-  }
-  function navigation(index: number) {
-    return (
-      <a
-        className="secondary"
-        href={navHref(index)}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={() =>
-          setFeedback(
-            `Directions to ${stops[index].name} opened in Google Maps. Your place in RouteRunner is saved in this tab.`,
-          )
-        }
-      >
-        <ArrowUpRight size={21} />
-        Navigate
-      </a>
-    );
-  }
-  const completed = stops.filter(
-    (_, i) => stopStatus(i, trip) === 'completed',
+
+  const started = execution.executionDayId !== undefined;
+  const currentIndex = execution.currentStopId
+    ? copenhagenTrip.stops.findIndex(
+        (stop) => stop.id === execution.currentStopId,
+      )
+    : -1;
+  const current = currentIndex >= 0 ? copenhagenTrip.stops[currentIndex] : null;
+  const firstPreparedStopId = day.plan[0]?.stopId;
+  const firstPreparedStop = copenhagenTrip.stops.find(
+    (stop) => stop.id === firstPreparedStopId,
+  );
+  const displayedStop = current ?? (!started ? firstPreparedStop : undefined);
+  const nextStopId = started
+    ? nextEligiblePendingStopId(copenhagenTrip, execution)
+    : day.plan[1]?.stopId;
+  const nextIndex = nextStopId
+    ? copenhagenTrip.stops.findIndex((stop) => stop.id === nextStopId)
+    : -1;
+  const nextStop = nextIndex >= 0 ? copenhagenTrip.stops[nextIndex] : null;
+  const completed = Object.values(execution.stopExecutions).filter(
+    (stopExecution) => stopExecution.status === 'completed',
   ).length;
+  const noAvailableCurrent = started && current === null;
+
+  function presentationStatus(stopId: StopId): PresentationStatus {
+    const stopExecution = execution.stopExecutions[stopId];
+    if (execution.currentStopId === stopId) return 'current';
+    if (nextStopId === stopId && started) return 'next';
+    if (stopExecution.status === 'completed') return 'completed';
+    if (stopExecution.status === 'skipped') return 'skipped';
+    if (
+      stopExecution.status === 'pending' &&
+      stopExecution.scheduledDayId === null
+    )
+      return 'saved';
+    return 'future';
+  }
+
+  const statuses = copenhagenTrip.stops.map((stop) =>
+    presentationStatus(stop.id),
+  );
+  const mapState: RouteMapState = {
+    current: currentIndex,
+    started,
+    skipped:
+      execution.stopExecutions[
+        copenhagenTrip.stops.find((stop) => stop.name === 'Reffen')!.id
+      ].status === 'skipped',
+    saved: statuses.flatMap((status, index) =>
+      status === 'saved' ? [index] : [],
+    ),
+    ended: false,
+    statuses,
+  };
+
+  function apply(
+    result: TransitionResult,
+    message: (state: TripExecutionState) => string,
+  ) {
+    if (!result.ok) {
+      setFeedback(result.error.message);
+      return;
+    }
+    setExecution(result.state);
+    setFeedback(message(result.state));
+  }
+
+  function beginDay() {
+    apply(
+      startDay(copenhagenTrip, execution, day.id, new Date().toISOString()),
+      () => `${firstPreparedStop?.name ?? 'The first stop'} is now Current.`,
+    );
+  }
+
+  function done() {
+    if (!current) return;
+    const completedName = current.name;
+    apply(
+      completeCurrentStop(copenhagenTrip, execution, new Date().toISOString()),
+      (state) => {
+        const promoted = copenhagenTrip.stops.find(
+          (stop) => stop.id === state.currentStopId,
+        );
+        return promoted
+          ? `${completedName} completed. ${promoted.name} is now Current.`
+          : `${completedName} completed. No Current remains.`;
+      },
+    );
+    setDetail(null);
+  }
+
+  function skip() {
+    if (!current) return;
+    const skippedName = current.name;
+    apply(
+      skipCurrentStop(copenhagenTrip, execution, new Date().toISOString()),
+      (state) => {
+        const promoted = copenhagenTrip.stops.find(
+          (stop) => stop.id === state.currentStopId,
+        );
+        return promoted
+          ? `${skippedName} skipped. ${promoted.name} is now Current.`
+          : `${skippedName} skipped. No Current remains.`;
+      },
+    );
+    setDetail(null);
+  }
+
+  function saveCurrentForLater() {
+    if (!current) return;
+    const savedName = current.name;
+    apply(
+      saveCurrentForLaterTransition(
+        copenhagenTrip,
+        execution,
+        new Date().toISOString(),
+      ),
+      (state) => {
+        const promoted = copenhagenTrip.stops.find(
+          (stop) => stop.id === state.currentStopId,
+        );
+        return promoted
+          ? `${savedName} saved for later. ${promoted.name} is now Current.`
+          : `${savedName} saved for later. No Current remains.`;
+      },
+    );
+    setDetail(null);
+  }
+
+  function preparedLeg(
+    from: Stop | undefined | null,
+    to: Stop | undefined | null,
+  ) {
+    if (!from || !to) return undefined;
+    return copenhagenTrip.legs?.find(
+      (candidate) =>
+        candidate.fromStopId === from.id && candidate.toStopId === to.id,
+    );
+  }
+
+  const nextLeg = preparedLeg(displayedStop, nextStop);
+
   return (
     <>
       <main className="prototype">
         <div className="prototype-bar">
           <span>
-            INTERACTIVE PROTOTYPE <b>v0</b>
+            PRODUCTION EXECUTION <b>IN MEMORY</b>
           </span>
-          <Select value={demo} onValueChange={(v) => v && preview(v)}>
-            <SelectTrigger
-              className="scenario-select"
-              aria-label="Preview design state"
-            >
-              <SelectValue>
-                {demoScenarios.find((x) => x[0] === demo)?.[1]}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent align="end">
-              {demoScenarios.map(([value, label]) => (
-                <SelectItem
-                  key={value}
-                  value={value}
-                  className="scenario-option"
-                >
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <span>Schedule projection unavailable</span>
         </div>
         <header className="brand">
           <div className="brand-mark">
@@ -212,48 +252,36 @@ export default function Page() {
           <span>YOUR DAY. ONE CLEAR NEXT STEP.</span>
           <div className="day-chip">
             <MapPin size={14} />
-            Copenhagen
+            {copenhagenTrip.city}
           </div>
         </header>
         <section className="trip-heading">
           <div>
             <p className="eyebrow">
-              ONE DAY · {trip.skipped ? '6' : '7'} STOPS
+              ONE DAY · {copenhagenTrip.stops.length} STOPS
             </p>
             <h1>
-              Copenhagen<span className="heading-dot">.</span>
+              {copenhagenTrip.title}
+              <span className="heading-dot">.</span>
             </h1>
           </div>
-          <div className={`schedule ${tight ? 'tight' : ''}`}>
+          <div className="schedule">
             <strong>
               <i />
-              {finished
-                ? trip.ended
-                  ? 'Sightseeing ended'
-                  : 'Trip complete'
-                : !trip.started
-                  ? 'Ready when you are'
-                  : risk
-                    ? 'Deadline at risk'
-                    : tight
-                      ? 'Schedule tight'
-                      : 'On plan'}
+              Schedule unavailable
             </strong>
-            <span>
-              {finished
-                ? `${completed} stops visited`
-                : !trip.started
-                  ? 'Start at 10:00'
-                  : risk
-                    ? `${Math.abs(buffer)} min over plan`
-                    : `${buffer} min buffer`}
-            </span>
+            <span>Live projection comes in a later slice</span>
           </div>
         </section>
         <div className="workspace">
           <div className="map-column">
             <section className="map-panel">
-              <RouteMap stops={stops} trip={trip} onStop={setDetail} />
+              <RouteMap
+                stops={mapStops}
+                trip={mapState}
+                onStop={setDetail}
+                showCurrentPosition={false}
+              />
               <button className="map-expand" onClick={() => setFull(true)}>
                 <Expand size={17} />
                 Full map
@@ -271,67 +299,60 @@ export default function Page() {
             <section className="execution" aria-label="Current step">
               <div className="execution-top">
                 <span className="active-label">
-                  {finished ? 'ALL SET' : trip.started ? 'NOW' : 'FIRST STOP'}
+                  {current ? 'NOW' : started ? 'NO CURRENT' : 'FIRST STOP'}
                 </span>
                 <span className="current-time">
                   <Clock size={14} />
-                  {time(trip.clock)} <small>demo</small>
+                  {started ? 'Day active' : 'Not started'}
                 </span>
               </div>
-              {finished ? (
+              {noAvailableCurrent ? (
                 <div className="finished">
                   <div className="finish-check">
                     <Check size={28} />
                   </div>
-                  <h2>{trip.ended ? 'Time to head out.' : 'Trip complete'}</h2>
+                  <h2>No Current remains</h2>
                   <p>
-                    {trip.ended
-                      ? 'Sightseeing has ended. Your unvisited stops stay in today’s itinerary.'
-                      : `${completed} stops visited${trip.skipped ? ' · Reffen skipped' : ''}. You’re ready for the next part of your journey.`}
+                    Available work is exhausted. The day remains active until a
+                    later slice adds explicit End Day behavior.
                   </p>
-                  <div className="airport-callout">
-                    <Plane size={22} />
-                    <div>
-                      <strong>Next, Copenhagen Airport</strong>
-                      <span>Metro M2 · follow live directions</span>
-                    </div>
-                  </div>
-                  <a
-                    className="primary"
-                    href="https://www.google.com/maps/dir/?api=1&destination=Copenhagen+Airport&travelmode=transit"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Airport directions
-                    <ArrowUpRight size={18} />
-                  </a>
                 </div>
-              ) : (
+              ) : displayedStop ? (
                 <>
                   <button
                     className="now stop-open"
-                    onClick={() => setDetail(trip.current)}
+                    onClick={() =>
+                      setDetail(
+                        copenhagenTrip.stops.findIndex(
+                          (stop) => stop.id === displayedStop.id,
+                        ),
+                      )
+                    }
                   >
-                    <span className="big-number">{trip.current + 1}</span>
+                    <span className="big-number">
+                      {copenhagenTrip.stops.findIndex(
+                        (stop) => stop.id === displayedStop.id,
+                      ) + 1}
+                    </span>
                     <div>
-                      <h2>{current.name}</h2>
+                      <h2>{displayedStop.name}</h2>
                       <p>
-                        {trip.started ? 'Explore' : 'Your day begins here'} · ~
-                        {current.minutes + trip.extra} min
+                        {started ? 'Explore' : 'Your day begins here'} · ~
+                        {displayedStop.plannedVisitMinutes} min
                       </p>
                     </div>
                     <ChevronRight size={22} />
                   </button>
-                  {!trip.started && (
+                  {!started && (
                     <p className="start-intro">
                       A waterfront morning, a walk through the city, and a
                       little room to wander.
                     </p>
                   )}
-                  {upcoming && (
+                  {nextStop && (
                     <button
                       className="next-step stop-open"
-                      onClick={() => setDetail(next)}
+                      onClick={() => setDetail(nextIndex)}
                     >
                       <span className="next-arrow">
                         <ArrowRight size={21} />
@@ -339,111 +360,58 @@ export default function Page() {
                       <div>
                         <p className="eyebrow">
                           NEXT{' '}
-                          {upcoming.kind === 'optional' && (
+                          {nextStop.priority === 'optional' && (
                             <span className="inline-optional">◇ OPTIONAL</span>
                           )}
                         </p>
-                        <h3>{upcoming.name}</h3>
+                        <h3>{nextStop.name}</h3>
                         <p>
-                          <Mode mode={nextLeg!.mode} />
-                          {nextLeg!.label} · {nextLeg!.minutes} min
-                          {nextLeg!.distance && ` · ${nextLeg!.distance}`}
+                          {nextLeg ? (
+                            <>
+                              <Mode mode={nextLeg.mode} />
+                              Prepared {nextLeg.mode} leg
+                              {nextLeg.plannedDurationMinutes !== undefined &&
+                                ` · ${nextLeg.plannedDurationMinutes} min`}
+                            </>
+                          ) : (
+                            'Travel details unavailable'
+                          )}
                         </p>
                       </div>
                       <ChevronRight size={19} />
                     </button>
                   )}
-                  {!upcoming && (
-                    <div className="next-step last-stop">
-                      <Plane size={22} />
-                      <div>
-                        <p className="eyebrow">AFTER SIGHTSEEING</p>
-                        <h3>Copenhagen Airport</h3>
-                        <p>Metro M2 · onward journey</p>
-                      </div>
-                    </div>
-                  )}
                   <div className="actions">
-                    {trip.started ? (
-                      navigation(trip.current)
-                    ) : (
-                      <button className="secondary" onClick={startAndNavigate}>
-                        <ArrowUpRight size={21} />
-                        Start &amp; navigate
+                    {!started && (
+                      <button className="secondary" disabled>
+                        Navigation coming later
                       </button>
                     )}
-                    <button className="primary" onClick={done}>
-                      {trip.started ? (
-                        <Check size={21} />
-                      ) : (
-                        <ArrowRight size={21} />
-                      )}{' '}
-                      {trip.started ? 'Done' : 'Start day'}
+                    <button
+                      className="primary"
+                      onClick={started ? done : beginDay}
+                    >
+                      {started ? <Check size={21} /> : <ArrowRight size={21} />}{' '}
+                      {started ? 'Done' : 'Start day'}
                     </button>
                   </div>
                   <p className="action-context">
-                    {trip.started
-                      ? `Done completes ${current.name}.`
-                      : 'Your prepared route is ready.'}
+                    {started
+                      ? `Done completes ${displayedStop.name}.`
+                      : 'Start Day creates Current. Navigation is not enabled yet.'}
                   </p>
                 </>
-              )}
+              ) : null}
               <div className="deadline">
                 <span>
                   <Flag size={15} />
-                  Hard stop <strong>18:30</strong>
+                  Hard stop <strong>{day.hardEndTime}</strong>
                 </span>
-                <span>
-                  {finished ? 'Then, airport' : `Est. finish ${time(endTime)}`}
-                </span>
+                <span>Static plan only</span>
               </div>
             </section>
-            {tight && canSkip && !kept && (
-              <section
-                className="recommendation"
-                aria-label="Optional stop recommendation"
-              >
-                <div className="recommendation-title">
-                  <span className="optional-diamond">◇</span>
-                  <strong>A little more breathing room</strong>
-                </div>
-                <p>
-                  Reffen adds about 40 min. Only {buffer} min of buffer remain
-                  before the 18:30 hard stop.
-                </p>
-                <div className="recommendation-actions">
-                  <button onClick={skip}>
-                    Skip Reffen <ArrowRight size={17} />
-                  </button>
-                  <button onClick={() => setKept(true)}>Keep it</button>
-                </div>
-                <span>Skip Reffen → restore ~35 min buffer.</span>
-              </section>
-            )}
-            {risk && (
-              <div className="risk-note">
-                <Clock size={19} />
-                <div>
-                  <strong>Sightseeing ends at 18:30</strong>
-                  <p>
-                    Shorten your remaining visits to protect your airport
-                    journey.
-                  </p>
-                  <button
-                    onClick={() => {
-                      setTrip((t) => ({ ...t, ended: true }));
-                      setFeedback(
-                        'Sightseeing ended. Continue to the airport.',
-                      );
-                    }}
-                  >
-                    End sightseeing now <ArrowRight size={15} />
-                  </button>
-                </div>
-              </div>
-            )}
             <output
-              className={`feedback ${feedback ? 'has-feedback' : ''} ${skipNotice ? `skip-${skipNotice}` : ''}`}
+              className={`feedback ${feedback ? 'has-feedback' : ''}`}
               aria-live="polite"
             >
               {feedback}
@@ -452,35 +420,47 @@ export default function Page() {
               <div className="section-heading">
                 <h2>Your day</h2>
                 <span>
-                  {completed} of {trip.skipped ? 6 : 7} visited
+                  {completed} of {copenhagenTrip.stops.length} visited
                 </span>
               </div>
               <ol>
-                {stops.map((s, i) => {
-                  const status = stopStatus(i, trip);
-                  const travel = leg(i, trip);
-                  const previousStatus = i > 0 ? stopStatus(i - 1, trip) : '';
+                {day.plan.map((item, planIndex) => {
+                  const stop = copenhagenTrip.stops.find(
+                    (candidate) => candidate.id === item.stopId,
+                  )!;
+                  const stopIndex = copenhagenTrip.stops.findIndex(
+                    (candidate) => candidate.id === stop.id,
+                  );
+                  const status = presentationStatus(stop.id);
+                  const previousItem = day.plan[planIndex - 1];
+                  const previousStop = previousItem
+                    ? copenhagenTrip.stops.find(
+                        (candidate) => candidate.id === previousItem.stopId,
+                      )
+                    : undefined;
+                  const travel = preparedLeg(previousStop, stop);
                   return (
-                    <li key={s.name} className={`itinerary-item ${status}`}>
-                      {i > 0 &&
+                    <li key={stop.id} className={`itinerary-item ${status}`}>
+                      {planIndex > 0 &&
                         status !== 'skipped' &&
                         status !== 'saved' &&
-                        previousStatus !== 'saved' && (
+                        travel && (
                           <div className="transit-row">
                             <Mode mode={travel.mode} size={14} />
                             <span>
-                              {travel.label} · {travel.minutes} min
-                              {travel.distance && ` · ${travel.distance}`}
+                              Prepared {travel.mode} leg
+                              {travel.plannedDurationMinutes !== undefined &&
+                                ` · ${travel.plannedDurationMinutes} min`}
                             </span>
                           </div>
                         )}
                       <button
                         className="itinerary-stop"
-                        onClick={() => setDetail(i)}
-                        aria-label={`${s.name}, ${status}, ${s.kind}`}
+                        onClick={() => setDetail(stopIndex)}
+                        aria-label={`${stop.name}, ${status}, ${stop.priority}`}
                       >
                         <span
-                          className={`stop-number ${s.kind === 'optional' ? 'optional-number' : ''}`}
+                          className={`stop-number ${stop.priority === 'optional' ? 'optional-number' : ''}`}
                         >
                           {status === 'completed' ? (
                             <Check size={17} />
@@ -489,19 +469,19 @@ export default function Page() {
                           ) : status === 'saved' ? (
                             '◇'
                           ) : (
-                            i + 1
+                            planIndex + 1
                           )}
                         </span>
                         <div>
-                          <strong>{s.name}</strong>
+                          <strong>{stop.name}</strong>
                           <span>
                             {status === 'skipped'
-                              ? 'Skipped · optional'
+                              ? 'Skipped'
                               : status === 'saved'
                                 ? 'Saved for later'
                                 : status === 'completed'
                                   ? 'Visited'
-                                  : `${s.minutes} min${s.kind === 'must' ? ' · Must-see' : s.kind === 'optional' ? ' · Optional' : ''}`}
+                                  : `${stop.plannedVisitMinutes} min · ${priorityLabel(stop)}`}
                           </span>
                         </div>
                         {status === 'current' ? (
@@ -519,8 +499,8 @@ export default function Page() {
               <div className="itinerary-end">
                 <Flag size={19} />
                 <div>
-                  <strong>18:30 · Sightseeing ends</strong>
-                  <span>Airport after sightseeing · Metro M2</span>
+                  <strong>{day.hardEndTime} · Sightseeing ends</strong>
+                  <span>Airport after sightseeing · static plan</span>
                 </div>
                 <Plane size={19} />
               </div>
@@ -531,8 +511,8 @@ export default function Page() {
           <span className="footer-brand">RouteRunner</span>
           <p>Your AI plans. RouteRunner executes.</p>
           <small>
-            Design prototype · illustrative timings and transit legs, not live
-            travel guidance.
+            In-memory execution · schedule projection, live routing and GPS are
+            not available yet.
           </small>
         </footer>
       </main>
@@ -544,32 +524,35 @@ export default function Page() {
               Back to day
             </DialogClose>
             <DialogTitle>
-              RouteRunner <span>· Copenhagen</span>
+              RouteRunner <span>· {copenhagenTrip.title}</span>
             </DialogTitle>
             <span className="full-deadline">
-              Hard stop <b>18:30</b>
+              Hard stop <b>{day.hardEndTime}</b>
             </span>
           </div>
           <DialogDescription className="sr-only">
-            Full route map. Closing returns to your unchanged trip state.
+            Full static route map. Closing returns to the unchanged execution
+            state.
           </DialogDescription>
           <div className="full-map-body">
-            <RouteMap stops={stops} trip={trip} onStop={setDetail} full />
+            <RouteMap
+              stops={mapStops}
+              trip={mapState}
+              onStop={setDetail}
+              full
+              showCurrentPosition={false}
+            />
           </div>
           <div className="full-bottom">
             <div>
               <p className="eyebrow">
-                {finished
-                  ? 'DAY COMPLETE'
-                  : trip.started
-                    ? 'NOW'
-                    : 'FIRST STOP'}
+                {current ? 'NOW' : started ? 'NO CURRENT' : 'FIRST STOP'}
               </p>
-              <strong>{finished ? 'On to the airport' : current.name}</strong>
-              {!finished && upcoming && (
+              <strong>{displayedStop?.name ?? 'No Current remains'}</strong>
+              {nextStop && (
                 <span>
                   <ArrowRight size={15} />
-                  {upcoming.name} · {nextLeg!.minutes} min
+                  {nextStop.name}
                 </span>
               )}
             </div>
@@ -595,8 +578,10 @@ export default function Page() {
             <>
               <div className="sheet-top">
                 <span className="eyebrow">
-                  STOP {detail + 1} OF 7 ·{' '}
-                  {stopStatus(detail, trip).toUpperCase()}
+                  STOP {detail + 1} OF {copenhagenTrip.stops.length} ·{' '}
+                  {presentationStatus(
+                    copenhagenTrip.stops[detail].id,
+                  ).toUpperCase()}
                 </span>
                 <SheetClose
                   className="sheet-close"
@@ -606,17 +591,16 @@ export default function Page() {
                 </SheetClose>
               </div>
               <SheetTitle className="detail-title">
-                {stops[detail].name}
+                {copenhagenTrip.stops[detail].name}
               </SheetTitle>
               <SheetDescription className="detail-description">
-                {stops[detail].minutes} min to explore ·{' '}
-                {stops[detail].kind === 'optional'
-                  ? 'Optional stop'
-                  : stops[detail].kind === 'must'
-                    ? 'Must-see'
-                    : 'Part of your route'}
+                {copenhagenTrip.stops[detail].plannedVisitMinutes} min to
+                explore
+                {' · '}
+                {priorityLabel(copenhagenTrip.stops[detail])}
               </SheetDescription>
-              {detail === 3 && (
+              {copenhagenTrip.stops[detail].id ===
+                copenhagenStopIds.kastellet && (
                 <figure className="stop-photo">
                   <img
                     src="https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Kastellet_aerial.jpg/1280px-Kastellet_aerial.jpg"
@@ -642,84 +626,46 @@ export default function Page() {
                   </figcaption>
                 </figure>
               )}
-              <p className="stop-note">{stops[detail].note}</p>
-              {detail < 6 && (
+              <p className="stop-note">
+                This stop remains in the immutable Copenhagen plan. Runtime
+                actions update only its trip execution state.
+              </p>
+              {started && detail === currentIndex && nextStop && (
                 <div className="detail-next">
                   <ArrowRight size={20} />
                   <div>
                     <span>After this</span>
-                    <strong>
-                      {
-                        stops[detail === 4 && trip.skipped ? 6 : detail + 1]
-                          .name
-                      }
-                    </strong>
+                    <strong>{nextStop.name}</strong>
                   </div>
                 </div>
               )}
               <div className="actions">
-                {detail === trip.current &&
-                  trip.started &&
-                  !finished &&
-                  navigation(detail)}
-                {detail === trip.current && !finished && (
+                {!started && detail === 0 && (
                   <button
                     className="primary"
                     onClick={() => {
-                      done();
+                      beginDay();
                       setDetail(null);
                     }}
                   >
-                    {trip.started ? (
-                      <Check size={20} />
-                    ) : (
-                      <ArrowRight size={20} />
-                    )}{' '}
-                    {trip.started ? 'Done' : 'Start day'}
+                    <ArrowRight size={20} /> Start day
                   </button>
                 )}
-                {detail !== trip.current && trip.started && !finished && (
-                  <>
-                    <button
-                      className="primary"
-                      onClick={() => futureAction('Queued for now', detail)}
-                    >
-                      Do now
-                    </button>
-                    <button
-                      className="secondary"
-                      onClick={() => futureAction('Already visited', detail)}
-                    >
-                      Already visited
-                    </button>
-                  </>
+                {started && detail === currentIndex && current && (
+                  <button className="primary" onClick={done}>
+                    <Check size={20} /> Done
+                  </button>
                 )}
-                {detail === trip.current && trip.started && !finished && (
-                  <div className="sheet-secondary-actions">
-                    {detail === 5 && canSkip && (
-                      <button onClick={skip}>Skip</button>
-                    )}
-                    <button onClick={saveCurrentForLater}>
-                      Save for later
-                    </button>
-                  </div>
-                )}
-                {detail !== trip.current && trip.started && !finished && (
-                  <div className="sheet-secondary-actions">
-                    <button onClick={() => futureAction('Skipped', detail)}>
-                      Skip
-                    </button>
-                    <button
-                      onClick={() => futureAction('Saved for later', detail)}
-                    >
-                      Save for later
-                    </button>
-                  </div>
-                )}
-                {detail !== trip.current && (!trip.started || finished) && (
+                {(detail !== currentIndex || !started) && (
                   <SheetClose className="primary">Back to day</SheetClose>
                 )}
               </div>
+              {started && detail === currentIndex && current && (
+                <div className="sheet-secondary-actions">
+                  {current.canSkip && <button onClick={skip}>Skip</button>}
+                  <button onClick={saveCurrentForLater}>Save for later</button>
+                </div>
+              )}
             </>
           )}
         </SheetContent>

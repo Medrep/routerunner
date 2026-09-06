@@ -15,6 +15,9 @@ export type RouteMapState = {
   skipped: boolean;
   saved: number[];
   ended: boolean;
+  statuses?: Array<
+    'completed' | 'current' | 'next' | 'skipped' | 'saved' | 'future'
+  >;
 };
 
 export default function RouteMap({
@@ -22,16 +25,19 @@ export default function RouteMap({
   trip,
   onStop,
   full = false,
+  showCurrentPosition = true,
 }: {
   stops: readonly RouteMapStop[];
   trip: RouteMapState;
   onStop: (i: number) => void;
   full?: boolean;
+  showCurrentPosition?: boolean;
 }) {
   const [zoom, setZoom] = useState(1);
   const [center, setCenter] = useState([280, 270]);
   const size = 560 / zoom;
   const status = (i: number) => {
+    if (trip.statuses) return trip.statuses[i] ?? 'future';
     if (trip.saved.includes(i)) return 'saved';
     if (i === 5 && trip.skipped) return 'skipped';
     if (i < trip.current) return 'completed';
@@ -46,7 +52,7 @@ export default function RouteMap({
     if (i === next) return 'next';
     return 'future';
   };
-  const gps = stops[Math.min(trip.current, 6)];
+  const currentStop = stops[Math.max(0, Math.min(trip.current, 6))];
   const roads = [
     'M0 105L330 340',
     'M0 165L303 390',
@@ -64,7 +70,11 @@ export default function RouteMap({
     <div className={`route-map ${full ? 'is-full' : ''}`}>
       <svg
         role="img"
-        aria-label="Schematic Copenhagen map with seven stops, route segments and a simulated current position"
+        aria-label={
+          showCurrentPosition
+            ? 'Schematic Copenhagen map with seven stops, route segments and a simulated current position'
+            : 'Schematic Copenhagen map with seven stops, static route segments and no live location'
+        }
         viewBox={`${center[0] - size / 2} ${center[1] - size / 2} ${size} ${size}`}
       >
         <defs>
@@ -148,16 +158,19 @@ export default function RouteMap({
         </g>
         {stops.slice(1).map((s, j) => {
           const i = j + 1;
+          const state = status(i);
+          const previousState = status(i - 1);
           if (
-            (trip.skipped && i === 5) ||
-            trip.saved.includes(i) ||
-            trip.saved.includes(i - 1)
+            state === 'skipped' ||
+            state === 'saved' ||
+            previousState === 'saved'
           )
             return null;
-          const from = trip.skipped && i === 6 ? stops[4] : stops[i - 1];
+          const from =
+            previousState === 'skipped' && i > 1 ? stops[i - 2] : stops[i - 1];
           const transit = i >= 5;
           const ferry = i === 5;
-          const done = i < trip.current;
+          const done = state === 'completed';
           return (
             <g key={i}>
               <path
@@ -171,13 +184,13 @@ export default function RouteMap({
                 stroke={
                   done
                     ? '#829c8d'
-                    : status(i) === 'next'
+                    : state === 'next'
                       ? '#166b50'
                       : ferry
                         ? '#427e94'
                         : '#667e74'
                 }
-                strokeWidth={status(i) === 'next' ? 4 : 3}
+                strokeWidth={state === 'next' ? 4 : 3}
                 strokeDasharray={
                   transit ? (ferry ? '8 6' : '16 7') : done ? '0' : '3 6'
                 }
@@ -268,25 +281,29 @@ export default function RouteMap({
             </g>
           );
         })}
-        {trip.started && trip.current < 7 && !trip.ended && (
-          <g>
-            <circle
-              cx={gps.x - 22}
-              cy={gps.y + 25}
-              r="15"
-              fill="#2978b1"
-              opacity=".14"
-            />
-            <circle
-              cx={gps.x - 22}
-              cy={gps.y + 25}
-              r="7"
-              fill="#2678b4"
-              stroke="white"
-              strokeWidth="3"
-            />
-          </g>
-        )}
+        {showCurrentPosition &&
+          trip.started &&
+          trip.current >= 0 &&
+          trip.current < 7 &&
+          !trip.ended && (
+            <g>
+              <circle
+                cx={currentStop.x - 22}
+                cy={currentStop.y + 25}
+                r="15"
+                fill="#2978b1"
+                opacity=".14"
+              />
+              <circle
+                cx={currentStop.x - 22}
+                cy={currentStop.y + 25}
+                r="7"
+                fill="#2678b4"
+                stroke="white"
+                strokeWidth="3"
+              />
+            </g>
+          )}
       </svg>
       <div className="map-topline">
         <span>
@@ -294,7 +311,10 @@ export default function RouteMap({
         </span>
         <span className="north">↑ N</span>
       </div>
-      <div className="map-caption">Schematic map · demo location</div>
+      <div className="map-caption">
+        Schematic map ·{' '}
+        {showCurrentPosition ? 'demo location' : 'no live location'}
+      </div>
       {full && (
         <div className="zoom-controls">
           <button
@@ -314,15 +334,18 @@ export default function RouteMap({
           >
             <Minus />
           </button>
-          <button
-            aria-label="Center on current stop"
-            onClick={() => {
-              setCenter([gps.x, gps.y]);
-              setZoom(1.75);
-            }}
-          >
-            <Crosshair />
-          </button>
+          {(showCurrentPosition ||
+            (trip.current >= 0 && trip.current < stops.length)) && (
+            <button
+              aria-label="Center on current stop"
+              onClick={() => {
+                setCenter([currentStop.x, currentStop.y]);
+                setZoom(1.75);
+              }}
+            >
+              <Crosshair />
+            </button>
+          )}
           <button
             onClick={() => {
               setZoom(1);

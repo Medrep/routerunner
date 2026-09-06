@@ -859,15 +859,22 @@ function StatePreview({
             <span>.</span>
           </h2>
         </div>
-        <div
-          className={`phone-health ${state.health?.toLowerCase().includes('tight') || state.health?.toLowerCase().includes('risk') ? 'warn' : ''}`}
-        >
-          <strong>
-            <i />
-            {statusText}
-          </strong>
-          <small>{state.metric}</small>
-        </div>
+        {state.health ? (
+          <div
+            className={`phone-health ${state.health.toLowerCase().includes('tight') || state.health.toLowerCase().includes('risk') ? 'warn' : ''}`}
+          >
+            <strong>
+              <i />
+              {statusText}
+            </strong>
+            <small>{state.metric}</small>
+          </div>
+        ) : (
+          <div className="phone-neutral-metric">
+            <strong>{state.metric}</strong>
+            <small>No hard deadline</small>
+          </div>
+        )}
       </div>
       {isFullMap && (
         <div className="phone-full-map-header">

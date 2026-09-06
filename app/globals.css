@@ -1906,6 +1906,22 @@ footer small {
   color: #5b6c60;
   font-size: 11px;
 }
+.phone-neutral-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+  color: #4f6456;
+  text-align: right;
+}
+.phone-neutral-metric strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+.phone-neutral-metric small {
+  color: #5b6c60;
+  font-size: 11px;
+}
 .phone-screen .route-map,
 .board-map-rome {
   height: 245px;

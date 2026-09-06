@@ -1,5 +1,11 @@
 export { createPostDayDestinationId, createStopId } from './types.ts';
 export { originalPlannedDayId } from './original-planned-day.ts';
+export { validateTrip } from './validate-trip.ts';
+export type {
+  TripValidationCode,
+  TripValidationError,
+  TripValidationResult,
+} from './validate-trip.ts';
 export type {
   BufferBelowRule,
   DayPlanItem,

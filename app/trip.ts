@@ -96,6 +96,7 @@ export type Trip = {
   clock: number;
   started: boolean;
   skipped: boolean;
+  saved: number[];
   extra: number;
   ended: boolean;
 };
@@ -104,6 +105,7 @@ export const normal = (): Trip => ({
   clock: 912,
   started: true,
   skipped: false,
+  saved: [],
   extra: 0,
   ended: false,
 });
@@ -124,7 +126,7 @@ export const time = (minutes: number) =>
     .padStart(2, '0')}:${(minutes % 60).toString().padStart(2, '0')}`;
 export function nextIndex(t: Trip) {
   let n = t.current + 1;
-  if (n === 5 && t.skipped) n++;
+  while (n < 7 && ((n === 5 && t.skipped) || t.saved.includes(n))) n++;
   return n;
 }
 export function leg(index: number, t: Trip) {
@@ -147,7 +149,7 @@ export function remaining(t: Trip) {
   if (t.current >= 7 || t.ended) return 0;
   let mins = stops[t.current].minutes + t.extra;
   for (let i = t.current + 1; i < 7; i++) {
-    if (i === 5 && t.skipped) continue;
+    if ((i === 5 && t.skipped) || t.saved.includes(i)) continue;
     mins += stops[i].minutes + leg(i, t).minutes;
   }
   return mins;
@@ -180,6 +182,7 @@ export function skipReffen(t: Trip): Trip {
   return { ...t, skipped: true };
 }
 export function stopStatus(i: number, t: Trip) {
+  if (t.saved.includes(i)) return 'saved';
   if (i === 5 && t.skipped) return 'skipped';
   if (i < t.current) return 'completed';
   if (!t.started || t.ended) return 'future';

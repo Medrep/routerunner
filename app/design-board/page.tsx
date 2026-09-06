@@ -44,6 +44,7 @@ type BoardState = {
   note?: string;
   hardStop?: string;
   timedAlert?: string;
+  fullMap?: boolean;
 };
 
 const cphItinerary = [
@@ -149,6 +150,26 @@ const states: BoardState[] = [
     hardStop: 'Hard stop · 18:30',
   },
   {
+    id: 'cph-full-map',
+    title: 'Copenhagen · Full Map',
+    city: 'Copenhagen',
+    day: 'Day 1 · One day',
+    kind: 'execution',
+    health: 'On plan',
+    metric: '42 min buffer',
+    current: 'Kastellet',
+    next: 'Little Mermaid',
+    currentMeta: 'NOW · Explore · 20 min',
+    nextMeta: 'NEXT · Walk 14 min · 1.1 km',
+    description:
+      'Expanded map preserves the same Current, Next, GPS and route context. Back to day returns to the unchanged execution state.',
+    actions: ['Back to day'],
+    itinerary: cphItinerary,
+    hardStop: 'Hard stop · 18:30 · Est. finish 17:48',
+    fullMap: true,
+    note: 'GPS and Current remain distinct; completed, future, optional and MUST stops stay legible on the route.',
+  },
+  {
     id: 'cph-future-details',
     title: 'Copenhagen · Future stop details',
     city: 'Copenhagen',
@@ -233,7 +254,7 @@ const states: BoardState[] = [
     city: 'Copenhagen',
     day: 'Day 1 · One day',
     kind: 'execution',
-    health: 'Schedule unavailable',
+    health: 'Schedule estimate temporarily unavailable',
     metric: 'Estimate unavailable',
     current: 'Kastellet',
     next: 'Little Mermaid',
@@ -248,7 +269,7 @@ const states: BoardState[] = [
   },
   {
     id: 'cph-routing-loading',
-    title: 'Copenhagen · Map / routing loading',
+    title: 'Copenhagen · Map / routing degraded',
     city: 'Copenhagen',
     day: 'Day 1 · One day',
     kind: 'execution',
@@ -282,7 +303,7 @@ const states: BoardState[] = [
     actions: ['Navigate', 'Done'],
     itinerary: cphItinerary,
     hardStop: 'Hard stop · 18:30 · Est. finish 17:48',
-    timedAlert: 'Colosseum entry · Projected 12 min late',
+    timedAlert: 'Reffen arrival · Projected 12 min late',
   },
   {
     id: 'cph-hard-stop',
@@ -430,7 +451,7 @@ const states: BoardState[] = [
     nextMeta: 'NEXT · Walk 8 min',
     description:
       'Do now queues a future stop after Current in FIFO order. Duplicate Do now is unavailable.',
-    actions: ['Queued for now · Cancel'],
+    actions: ['Cancel Do Now'],
     itinerary: [
       { name: 'Colosseum', status: 'current', meta: 'NOW · 60 min' },
       {
@@ -600,6 +621,31 @@ function BoardMap({
   state: BoardState;
   onStop: () => void;
 }) {
+  if (state.id === 'for-later') {
+    return (
+      <div
+        className="board-map board-map-neutral"
+        aria-label="Neutral map point for a saved stop"
+      >
+        <div className="board-map-topline">
+          <span>
+            <i /> For later
+          </span>
+          <span>↑ N</span>
+        </div>
+        <div className="neutral-water" />
+        <div className="neutral-grid" />
+        <button
+          className="neutral-pin"
+          onClick={onStop}
+          aria-label="Reffen, saved for later"
+        >
+          ◇
+        </button>
+        <span className="board-map-caption">Outside active route</span>
+      </div>
+    );
+  }
   if (state.city === 'Copenhagen') {
     let trip: Trip = normal();
     if (state.id === 'cph-ready') trip = scenario('A');
@@ -609,7 +655,7 @@ function BoardMap({
     if (state.id === 'cph-complete') trip = scenario('complete');
     if (state.id === 'for-later' || state.id === 'save-current')
       trip = scenario('F');
-    return <RouteMap trip={trip} onStop={onStop} />;
+    return <RouteMap trip={trip} onStop={onStop} full={state.fullMap} />;
   }
   const pins = state.itinerary.slice(0, 5);
   return (
@@ -751,6 +797,7 @@ function StatePreview({
   const [decision, setDecision] = useState<'skip' | 'keep' | ''>('');
   const [resolved, setResolved] = useState(false);
   const isNoCurrent = !state.current || state.current === 'No Current';
+  const isFullMap = Boolean(state.fullMap);
   const statusText = state.health ?? 'Preview';
   const action = (label: string) => {
     if (label === 'Skip Reffen') {
@@ -822,6 +869,15 @@ function StatePreview({
           <small>{state.metric}</small>
         </div>
       </div>
+      {isFullMap && (
+        <div className="phone-full-map-header">
+          <button onClick={() => action('Back to day')}>
+            <ArrowRight size={15} /> Back to day
+          </button>
+          <strong>Full route map</strong>
+          <span>Hard stop · 18:30</span>
+        </div>
+      )}
       <BoardMap state={state} onStop={() => setSheetOpen(true)} />
       <section className={`phone-execution ${isNoCurrent ? 'no-current' : ''}`}>
         <div className="phone-execution-top">
@@ -872,7 +928,7 @@ function StatePreview({
             <ChevronRight size={17} />
           </div>
         )}
-        {!showDecision && (
+        {!showDecision && !isFullMap && (
           <div className="phone-actions">
             {visibleActions.slice(0, 2).map((label) => (
               <PreviewButton
@@ -888,7 +944,7 @@ function StatePreview({
             ))}
           </div>
         )}
-        {!showDecision && visibleActions.length > 2 && (
+        {!showDecision && !isFullMap && visibleActions.length > 2 && (
           <div className="phone-secondary-actions">
             {visibleActions.slice(2).map((label) => (
               <button key={label} onClick={() => action(label)}>
@@ -966,11 +1022,20 @@ function StatePreview({
               <PreviewButton
                 key={label}
                 label={label}
-                primary={label === 'Done'}
+                primary={label === 'Done' || label === 'Do now'}
                 onClick={() => action(label)}
               />
             ))}
           </div>
+          {state.actions.length > 2 && (
+            <div className="sheet-secondary-actions">
+              {state.actions.slice(2).map((label) => (
+                <button key={label} onClick={() => action(label)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           <button className="sheet-dismiss" onClick={() => setSheetOpen(false)}>
             Close details
           </button>
@@ -1091,6 +1156,7 @@ export default function DesignBoardPage() {
           <div className="phone-stage">
             <div className="phone-frame">
               <StatePreview
+                key={state.id}
                 state={state}
                 feedback={feedback}
                 onFeedback={setFeedback}

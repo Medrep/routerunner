@@ -117,7 +117,12 @@ export default function RouteMap({
         </g>
         {stops.slice(1).map((s, j) => {
           const i = j + 1;
-          if (trip.skipped && i === 5) return null;
+          if (
+            (trip.skipped && i === 5) ||
+            trip.saved.includes(i) ||
+            trip.saved.includes(i - 1)
+          )
+            return null;
           const from = trip.skipped && i === 6 ? stops[4] : stops[i - 1];
           const transit = i >= 5;
           const ferry = i === 5;
@@ -174,7 +179,7 @@ export default function RouteMap({
               {active && (
                 <circle cx={s.x} cy={s.y} r="27" fill="#166b50" opacity=".15" />
               )}
-              {s.kind === 'optional' ? (
+              {s.kind === 'optional' || st === 'saved' ? (
                 <rect
                   x={s.x - 15}
                   y={s.y - 15}
@@ -182,7 +187,9 @@ export default function RouteMap({
                   height="30"
                   rx="5"
                   transform={`rotate(45 ${s.x} ${s.y})`}
-                  fill={st === 'skipped' ? '#edf0e8' : 'white'}
+                  fill={
+                    st === 'skipped' || st === 'saved' ? '#edf0e8' : 'white'
+                  }
                   stroke="#64756a"
                   strokeWidth="2"
                 />
@@ -206,7 +213,13 @@ export default function RouteMap({
                 fontSize="14"
                 fontWeight="700"
               >
-                {st === 'completed' ? '✓' : st === 'skipped' ? '−' : i + 1}
+                {st === 'completed'
+                  ? '✓'
+                  : st === 'skipped'
+                    ? '−'
+                    : st === 'saved'
+                      ? '◇'
+                      : i + 1}
               </text>
               <text
                 x={labelLeft ? s.x - 24 : s.x + 25}

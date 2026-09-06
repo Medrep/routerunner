@@ -113,6 +113,41 @@ export default function Page() {
         : 'Your day starts at Nyhavn.',
     );
   }
+  function startAndNavigate() {
+    setTrip((t) => advance(t));
+    setFeedback('Day started. Opening directions to Nyhavn.');
+    window.open(navHref(0), '_blank', 'noopener,noreferrer');
+  }
+  function saveCurrentForLater() {
+    const savedIndex = trip.current;
+    const savedName = current.name;
+    const savedStops = trip.saved.includes(savedIndex)
+      ? trip.saved
+      : [...trip.saved, savedIndex];
+    const promoted = nextIndex({ ...trip, saved: savedStops });
+    setTrip((t) => {
+      const nextSaved = t.saved.includes(t.current)
+        ? t.saved
+        : [...t.saved, t.current];
+      return {
+        ...t,
+        saved: nextSaved,
+        current: nextIndex({ ...t, saved: nextSaved }),
+      };
+    });
+    if (promoted >= 7) {
+      setFeedback(`${savedName} saved for later. No Current remains.`);
+    } else {
+      setFeedback(
+        `${savedName} saved for later. ${stops[promoted].name} is now Current.`,
+      );
+    }
+    setDetail(null);
+  }
+  function futureAction(label: string, index: number) {
+    setFeedback(`${stops[index].name} · ${label}`);
+    setDetail(null);
+  }
   function skip() {
     setTrip((t) => skipReffen(t));
     setDemo('F');
@@ -202,7 +237,9 @@ export default function Page() {
             <strong>
               <i />
               {finished
-                ? 'Day complete'
+                ? trip.ended
+                  ? 'Sightseeing ended'
+                  : 'Trip complete'
                 : !trip.started
                   ? 'Ready when you are'
                   : risk
@@ -255,11 +292,7 @@ export default function Page() {
                   <div className="finish-check">
                     <Check size={28} />
                   </div>
-                  <h2>
-                    {trip.ended
-                      ? 'Time to head out.'
-                      : 'A good day, well spent.'}
-                  </h2>
+                  <h2>{trip.ended ? 'Time to head out.' : 'Trip complete'}</h2>
                   <p>
                     {trip.ended
                       ? 'Sightseeing has ended. Your unvisited stops stay in today’s itinerary.'
@@ -340,7 +373,14 @@ export default function Page() {
                     </div>
                   )}
                   <div className="actions">
-                    {navigation(trip.started && next < 7 ? next : trip.current)}
+                    {trip.started ? (
+                      navigation(trip.current)
+                    ) : (
+                      <button className="secondary" onClick={startAndNavigate}>
+                        <ArrowUpRight size={21} />
+                        Start &amp; navigate
+                      </button>
+                    )}
                     <button className="primary" onClick={done}>
                       {trip.started ? (
                         <Check size={21} />
@@ -411,13 +451,12 @@ export default function Page() {
                 </div>
               </div>
             )}
-            <div
+            <output
               className={`feedback ${feedback ? 'has-feedback' : ''} ${skipNotice ? `skip-${skipNotice}` : ''}`}
-              role="status"
               aria-live="polite"
             >
               {feedback}
-            </div>
+            </output>
             <section className="itinerary" aria-label="Full day itinerary">
               <div className="section-heading">
                 <h2>Your day</h2>
@@ -429,17 +468,21 @@ export default function Page() {
                 {stops.map((s, i) => {
                   const status = stopStatus(i, trip);
                   const travel = leg(i, trip);
+                  const previousStatus = i > 0 ? stopStatus(i - 1, trip) : '';
                   return (
                     <li key={s.name} className={`itinerary-item ${status}`}>
-                      {i > 0 && status !== 'skipped' && (
-                        <div className="transit-row">
-                          <Mode mode={travel.mode} size={14} />
-                          <span>
-                            {travel.label} · {travel.minutes} min
-                            {travel.distance && ` · ${travel.distance}`}
-                          </span>
-                        </div>
-                      )}
+                      {i > 0 &&
+                        status !== 'skipped' &&
+                        status !== 'saved' &&
+                        previousStatus !== 'saved' && (
+                          <div className="transit-row">
+                            <Mode mode={travel.mode} size={14} />
+                            <span>
+                              {travel.label} · {travel.minutes} min
+                              {travel.distance && ` · ${travel.distance}`}
+                            </span>
+                          </div>
+                        )}
                       <button
                         className="itinerary-stop"
                         onClick={() => setDetail(i)}
@@ -452,6 +495,8 @@ export default function Page() {
                             <Check size={17} />
                           ) : status === 'skipped' ? (
                             '−'
+                          ) : status === 'saved' ? (
+                            '◇'
                           ) : (
                             i + 1
                           )}
@@ -461,9 +506,11 @@ export default function Page() {
                           <span>
                             {status === 'skipped'
                               ? 'Skipped · optional'
-                              : status === 'completed'
-                                ? 'Visited'
-                                : `${s.minutes} min${s.kind === 'must' ? ' · Must-see' : s.kind === 'optional' ? ' · Optional' : ''}`}
+                              : status === 'saved'
+                                ? 'Saved for later'
+                                : status === 'completed'
+                                  ? 'Visited'
+                                  : `${s.minutes} min${s.kind === 'must' ? ' · Must-see' : s.kind === 'optional' ? ' · Optional' : ''}`}
                           </span>
                         </div>
                         {status === 'current' ? (
@@ -620,7 +667,10 @@ export default function Page() {
                 </div>
               )}
               <div className="actions">
-                {navigation(detail)}
+                {detail === trip.current &&
+                  trip.started &&
+                  !finished &&
+                  navigation(detail)}
                 {detail === trip.current && !finished && (
                   <button
                     className="primary"
@@ -637,15 +687,48 @@ export default function Page() {
                     {trip.started ? 'Done' : 'Start day'}
                   </button>
                 )}
-                {detail !== trip.current && (
+                {detail !== trip.current && trip.started && !finished && (
+                  <>
+                    <button
+                      className="primary"
+                      onClick={() => futureAction('Queued for now', detail)}
+                    >
+                      Do now
+                    </button>
+                    <button
+                      className="secondary"
+                      onClick={() => futureAction('Already visited', detail)}
+                    >
+                      Already visited
+                    </button>
+                  </>
+                )}
+                {detail === trip.current && trip.started && !finished && (
+                  <div className="sheet-secondary-actions">
+                    {detail === 5 && canSkip && (
+                      <button onClick={skip}>Skip</button>
+                    )}
+                    <button onClick={saveCurrentForLater}>
+                      Save for later
+                    </button>
+                  </div>
+                )}
+                {detail !== trip.current && trip.started && !finished && (
+                  <div className="sheet-secondary-actions">
+                    <button onClick={() => futureAction('Skipped', detail)}>
+                      Skip
+                    </button>
+                    <button
+                      onClick={() => futureAction('Saved for later', detail)}
+                    >
+                      Save for later
+                    </button>
+                  </div>
+                )}
+                {detail !== trip.current && (!trip.started || finished) && (
                   <SheetClose className="primary">Back to day</SheetClose>
                 )}
               </div>
-              {detail === 5 && canSkip && (
-                <button className="skip-detail" onClick={skip}>
-                  Skip this optional stop
-                </button>
-              )}
             </>
           )}
         </SheetContent>

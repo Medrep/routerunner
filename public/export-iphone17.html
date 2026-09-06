@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>RouteRunner · iPhone 17 export</title>
+<style>html,body{margin:0;padding:0;width:1206px;background:#f4f5f2}iframe{display:block;border:0;width:402px;height:874px;transform:scale(3);transform-origin:top left}body{height:2622px;overflow:hidden}</style>
+</head><body><iframe title="RouteRunner iPhone 17" src="/"></iframe>
+<script>
+const frame = document.querySelector('iframe');
+if (new URLSearchParams(location.search).has('full')) {
+  frame.addEventListener('load', () => {
+    const resize = () => {
+      const height = Math.ceil(frame.contentDocument.body.getBoundingClientRect().height);
+      frame.style.height = height + 'px';
+      document.body.style.height = height * 3 + 'px';
+    };
+    new ResizeObserver(resize).observe(frame.contentDocument.body);
+    resize();
+  });
+}
+</script></body>
+</html>

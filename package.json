@@ -9,6 +9,8 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
+    "test": "node --test domain/__tests__/domain-contracts.test.ts",
+    "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "format": "oxfmt"
   },

@@ -2086,6 +2086,36 @@ footer small {
 .phone-resolution p {
   margin-top: 5px;
 }
+.phone-timed-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #d7ded7;
+  border-radius: 9px;
+  color: #53645b;
+  background: #eef1ec;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.phone-timed-alert svg {
+  margin-top: 1px;
+  color: #7a8c7f;
+}
+.phone-timed-alert strong,
+.phone-timed-alert span {
+  display: block;
+}
+.phone-timed-alert strong {
+  color: #354c40;
+  font-size: 10px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+.phone-timed-alert span {
+  margin-top: 2px;
+}
 .phone-feedback {
   color: #245d43;
   background: #e2eee4;

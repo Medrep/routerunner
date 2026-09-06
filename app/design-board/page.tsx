@@ -43,6 +43,7 @@ type BoardState = {
   itinerary: Array<{ name: string; status: string; meta?: string }>;
   note?: string;
   hardStop?: string;
+  timedAlert?: string;
 };
 
 const cphItinerary = [
@@ -244,6 +245,44 @@ const states: BoardState[] = [
     itinerary: cphItinerary,
     hardStop: 'Hard stop · 18:30 · Travel estimate unavailable',
     note: 'Travel time unknown. RouteRunner will restore schedule context when an estimate is available.',
+  },
+  {
+    id: 'cph-routing-loading',
+    title: 'Copenhagen · Map / routing loading',
+    city: 'Copenhagen',
+    day: 'Day 1 · One day',
+    kind: 'execution',
+    health: 'Schedule estimate temporarily unavailable',
+    metric: 'Estimate unavailable',
+    current: 'Kastellet',
+    next: 'Little Mermaid',
+    currentMeta: 'NOW · Explore · 20 min',
+    nextMeta: 'NEXT · Travel time unknown',
+    description:
+      'A loading / degradation presentation keeps the route usable without inventing ETA, buffer, or recovery minutes.',
+    actions: ['Navigate', 'Done'],
+    itinerary: cphItinerary,
+    hardStop: 'Hard stop · 18:30 · Estimate unavailable',
+    note: 'Loading route estimate… Travel time unknown. Current actions remain available.',
+  },
+  {
+    id: 'cph-timed-alert',
+    title: 'Copenhagen · Timed-stop alert + ON PLAN',
+    city: 'Copenhagen',
+    day: 'Day 1 · One day',
+    kind: 'execution',
+    health: 'On plan',
+    metric: '42 min buffer',
+    current: 'Kastellet',
+    next: 'Little Mermaid',
+    currentMeta: 'NOW · Explore · 20 min',
+    nextMeta: 'NEXT · Walk 14 min · 1.1 km',
+    description:
+      'A timed-stop alert is separate from overall schedule health; both facts remain visible together.',
+    actions: ['Navigate', 'Done'],
+    itinerary: cphItinerary,
+    hardStop: 'Hard stop · 18:30 · Est. finish 17:48',
+    timedAlert: 'Colosseum entry · Projected 12 min late',
   },
   {
     id: 'cph-hard-stop',
@@ -880,6 +919,15 @@ function StatePreview({
           <div className={`phone-resolution ${resolved ? 'resolved' : ''}`}>
             <strong>{resolved ? 'Resolution saved' : state.metric}</strong>
             <p>{state.note ?? 'Choose one bounded action to continue.'}</p>
+          </div>
+        )}
+        {state.timedAlert && (
+          <div className="phone-timed-alert">
+            <Clock size={14} />
+            <div>
+              <strong>Timed stop</strong>
+              <span>{state.timedAlert}</span>
+            </div>
           </div>
         )}
         {feedback && <output className="phone-feedback">{feedback}</output>}

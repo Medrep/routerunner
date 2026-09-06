@@ -9,6 +9,7 @@ import type {
   TripExecutionState,
 } from '../execution/types.ts';
 import { originalPlannedDayId } from '../trip/original-planned-day.ts';
+import { createPostDayDestinationId, createStopId } from '../trip/types.ts';
 import type { PostDayDestination, Trip } from '../trip/types.ts';
 
 type HasCurrentField = 'current' extends keyof StopExecution ? true : false;
@@ -16,6 +17,9 @@ type AllowsCurrentStatus = 'current' extends StopExecutionStatus ? true : false;
 
 const stopExecutionHasNoCurrentField: HasCurrentField = false;
 const stopExecutionHasNoCurrentStatus: AllowsCurrentStatus = false;
+const colosseumId = createStopId('colosseum');
+const treviId = createStopId('trevi');
+const airportId = createPostDayDestinationId('rome-airport');
 
 const trip: Trip = {
   id: 'rome',
@@ -26,7 +30,7 @@ const trip: Trip = {
   endDate: '2026-09-07',
   stops: [
     {
-      id: 'colosseum',
+      id: colosseumId,
       name: 'Colosseum',
       latitude: 41.8902,
       longitude: 12.4922,
@@ -35,7 +39,7 @@ const trip: Trip = {
       plannedVisitMinutes: 90,
     },
     {
-      id: 'trevi',
+      id: treviId,
       name: 'Trevi Fountain',
       latitude: 41.9009,
       longitude: 12.4833,
@@ -48,14 +52,14 @@ const trip: Trip = {
     {
       id: 'day-1',
       date: '2026-09-06',
-      plan: [{ stopId: 'colosseum', order: 1 }],
+      plan: [{ stopId: colosseumId, order: 1 }],
     },
     {
       id: 'day-2',
       date: '2026-09-07',
-      plan: [{ stopId: 'trevi', order: 1 }],
+      plan: [{ stopId: treviId, order: 1 }],
       postDayDestination: {
-        id: 'rome-airport',
+        id: airportId,
         name: 'Rome Fiumicino Airport',
         navigationTarget: { address: 'Via dell’Aeroporto di Fiumicino' },
         mode: 'transit',
@@ -67,10 +71,10 @@ const trip: Trip = {
 void test('a multi-day trip owns stops while days reference stop IDs', () => {
   assert.equal(trip.days.length, 2);
   assert.equal(
-    trip.stops.find((stop) => stop.id === 'trevi')?.name,
+    trip.stops.find((stop) => stop.id === treviId)?.name,
     'Trevi Fountain',
   );
-  assert.deepEqual(trip.days[1].plan, [{ stopId: 'trevi', order: 1 }]);
+  assert.deepEqual(trip.days[1].plan, [{ stopId: treviId, order: 1 }]);
   assert.equal('stops' in trip.days[1], false);
 });
 
@@ -78,15 +82,15 @@ void test('original planned day remains derivable when execution diverges', () =
   const execution: TripExecutionState = {
     tripId: trip.id,
     executionDayId: 'day-1',
-    currentStopId: 'colosseum',
+    currentStopId: colosseumId,
     stopExecutions: {
-      colosseum: {
-        stopId: 'colosseum',
+      [colosseumId]: {
+        stopId: colosseumId,
         status: 'pending',
         scheduledDayId: 'day-1',
       },
-      trevi: {
-        stopId: 'trevi',
+      [treviId]: {
+        stopId: treviId,
         status: 'completed',
         scheduledDayId: 'day-2',
         completedOnDayId: 'day-1',
@@ -99,9 +103,9 @@ void test('original planned day remains derivable when execution diverges', () =
     lastUpdatedAt: '2026-09-06T16:00:00+02:00',
   };
 
-  assert.equal(originalPlannedDayId(trip, 'trevi'), 'day-2');
-  assert.equal(execution.stopExecutions.trevi.completedOnDayId, 'day-1');
-  assert.deepEqual(trip.days[1].plan, [{ stopId: 'trevi', order: 1 }]);
+  assert.equal(originalPlannedDayId(trip, treviId), 'day-2');
+  assert.equal(execution.stopExecutions[treviId].completedOnDayId, 'day-1');
+  assert.deepEqual(trip.days[1].plan, [{ stopId: treviId, order: 1 }]);
 });
 
 void test('Current has one authority at trip execution level', () => {
@@ -109,20 +113,20 @@ void test('Current has one authority at trip execution level', () => {
   assert.equal(stopExecutionHasNoCurrentStatus, false);
 
   const execution: Pick<TripExecutionState, 'currentStopId'> = {
-    currentStopId: 'trevi',
+    currentStopId: treviId,
   };
-  assert.deepEqual(execution, { currentStopId: 'trevi' });
+  assert.deepEqual(execution, { currentStopId: treviId });
 });
 
 void test('post-day destination remains outside sightseeing execution', () => {
   const destination: PostDayDestination = trip.days[1].postDayDestination!;
   const executionStopIds = Object.keys({
-    colosseum: true,
-    trevi: true,
+    [colosseumId]: true,
+    [treviId]: true,
   } satisfies Record<string, boolean>);
 
   assert.equal(
-    trip.stops.some((stop) => stop.id === destination.id),
+    trip.stops.some((stop) => String(stop.id) === String(destination.id)),
     false,
   );
   assert.equal(executionStopIds.includes(destination.id), false);
@@ -140,7 +144,7 @@ void test('unknown duration is explicit rather than a zero heuristic', () => {
 
 void test('Do Now preserves prior scheduled-day context', () => {
   const queued: DoNowQueueEntry = {
-    stopId: 'trevi',
+    stopId: treviId,
     returnScheduledDayId: 'day-2',
   };
 

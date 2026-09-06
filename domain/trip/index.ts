@@ -1,3 +1,4 @@
+export { createPostDayDestinationId, createStopId } from './types.ts';
 export { originalPlannedDayId } from './original-planned-day.ts';
 export type {
   BufferBelowRule,
@@ -6,6 +7,7 @@ export type {
   Leg,
   LegGeometryPoint,
   PostDayDestination,
+  PostDayDestinationId,
   PostDayNavigationTarget,
   Stop,
   StopId,

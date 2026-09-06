@@ -1,5 +1,25 @@
-/** A stop's stable identity within a trip. */
-export type StopId = string;
+declare const stopIdBrand: unique symbol;
+declare const postDayDestinationIdBrand: unique symbol;
+
+/** Opaque sightseeing-stop identity within a trip. */
+export type StopId = string & { readonly [stopIdBrand]: 'StopId' };
+
+/** Opaque identity for static post-day navigation data. */
+export type PostDayDestinationId = string & {
+  readonly [postDayDestinationIdBrand]: 'PostDayDestinationId';
+};
+
+/** Explicit raw-data boundary; fixture validation belongs to RR-MVP-01. */
+export function createStopId(value: string): StopId {
+  return value as StopId;
+}
+
+/** Explicit raw-data boundary; fixture validation belongs to RR-MVP-01. */
+export function createPostDayDestinationId(
+  value: string,
+): PostDayDestinationId {
+  return value as PostDayDestinationId;
+}
 
 export type StopPriority = 'must' | 'normal' | 'optional';
 
@@ -39,7 +59,7 @@ export type PostDayNavigationTarget =
 
 /** Static navigation data after sightseeing; never a sightseeing stop. */
 export interface PostDayDestination {
-  id: string;
+  id: PostDayDestinationId;
   name: string;
   navigationTarget: PostDayNavigationTarget;
   targetArrivalTime?: string;

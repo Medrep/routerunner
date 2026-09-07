@@ -46,7 +46,7 @@ void test('initializes one pending execution per sightseeing stop from static pl
   const tripBefore = snapshot(copenhagenTrip);
   const state = initialState();
 
-  assert.equal(Object.keys(state.stopExecutions).length, 7);
+  assert.equal(Object.keys(state.stopExecutions).length, 16);
   assert.deepEqual(
     Object.keys(state.stopExecutions),
     copenhagenTrip.stops.map((stop) => stop.id),
@@ -88,7 +88,7 @@ void test('preserves null scheduling for a valid stop outside every day plan', (
 
   const state = createInitialTripExecutionState(unscheduledTrip, initializedAt);
   assert.equal(
-    state.stopExecutions[copenhagenStopIds.christiania].scheduledDayId,
+    state.stopExecutions[copenhagenStopIds.torvehallerne].scheduledDayId,
     null,
   );
 });
@@ -190,6 +190,10 @@ void test('ordered advancement and presentation Next skip ineligible entries', (
       [copenhagenStopIds.marbleChurch]: {
         ...active.stopExecutions[copenhagenStopIds.marbleChurch],
         status: 'skipped',
+      },
+      [copenhagenStopIds.gefionFountain]: {
+        ...active.stopExecutions[copenhagenStopIds.gefionFountain],
+        status: 'completed',
       },
       [copenhagenStopIds.kastellet]: {
         ...active.stopExecutions[copenhagenStopIds.kastellet],

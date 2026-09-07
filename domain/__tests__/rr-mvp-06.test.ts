@@ -378,7 +378,11 @@ void test('map view uses DayPlanItem.order and StopId-derived statuses', () => {
   assert.equal(view.stops[0].status, 'current');
   assert.equal(view.stops[1].status, 'next');
   assert.equal(view.stops[2].status, 'completed');
-  assert.equal(view.stops[3].status, 'skipped');
+  assert.equal(
+    view.stops.find((stop) => stop.stopId === copenhagenStopIds.kastellet)
+      ?.status,
+    'skipped',
+  );
   assert.equal(
     view.stops.find((stop) => stop.stopId === copenhagenStopIds.reffen)?.status,
     'saved',
@@ -393,16 +397,34 @@ void test('map view uses DayPlanItem.order and StopId-derived statuses', () => {
 void test('prepared legs are presented schematically without live routing', () => {
   const view = deriveRouteMapView(copenhagenTrip, activeState());
   assert.equal(view.routePresentation, 'schematic-endpoints');
+  assert.equal(view.stops.length, 16);
+  assert.equal(view.legs.length, 15);
   assert.deepEqual(
     view.legs.map((leg) => leg.mode),
-    ['walk', 'walk', 'walk', 'walk', 'ferry', 'transit'],
+    [
+      'walk',
+      'walk',
+      'walk',
+      'walk',
+      'walk',
+      'ferry',
+      'ferry',
+      'walk',
+      'walk',
+      'walk',
+      'walk',
+      'walk',
+      'walk',
+      'walk',
+      'walk',
+    ],
   );
   assert.ok(
     view.legs.every((leg) => leg.representation === 'schematic-endpoints'),
   );
   assert.equal(
     view.legs.some(
-      (leg) => leg.legId === 'copenhagen-little-mermaid-christiania',
+      (leg) => leg.legId === 'copenhagen-little-mermaid-christianshavn',
     ),
     false,
   );

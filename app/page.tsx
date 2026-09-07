@@ -1,6 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -11,6 +17,7 @@ import {
   Flag,
   Footprints,
   MapPin,
+  Navigation,
   Plane,
   Route,
   Ship,
@@ -24,10 +31,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from '@/components/ui/dialog';
-import RouteMap, {
-  type RouteMapState,
-  type RouteMapStop,
-} from '@/components/routerunner/route-map';
+import RouteMap from '@/components/routerunner/route-map';
 import {
   Sheet,
   SheetClose,
@@ -36,8 +40,11 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { copenhagenStopIds, copenhagenTrip } from '@/data/trips/copenhagen';
+import { useForegroundLocation } from '@/hooks/use-foreground-location';
 import {
   completeCurrentStop,
+  currentGoogleMapsNavigationUrl,
+  deriveRouteMapView,
   nextEligiblePendingStopId,
   orderedDayPlan,
   persistExecutionTransition,
@@ -45,7 +52,8 @@ import {
   saveCurrentForLater as saveCurrentForLaterTransition,
   saveExecutionState,
   skipCurrentStop,
-  startDay,
+  startDayAndBuildNavigation,
+  type RouteMapStopStatus,
   type Stop,
   type StopId,
   type TransitionResult,
@@ -53,26 +61,10 @@ import {
   type TripExecutionState,
 } from '@/domain';
 
-type PresentationStatus = NonNullable<RouteMapState['statuses']>[number];
+type PresentationStatus = RouteMapStopStatus;
 
 const day = copenhagenTrip.days[0];
 const orderedPlan = orderedDayPlan(day);
-const mapPositions = [
-  { x: 215, y: 374 },
-  { x: 232, y: 285 },
-  { x: 171, y: 249 },
-  { x: 247, y: 161 },
-  { x: 316, y: 111 },
-  { x: 449, y: 174 },
-  { x: 367, y: 428 },
-] as const;
-
-const mapStops: RouteMapStop[] = copenhagenTrip.stops.map((stop, index) => ({
-  name: stop.name,
-  kind: stop.priority === 'optional' ? 'optional' : stop.priority,
-  ...mapPositions[index],
-}));
-
 function Mode({ mode, size = 16 }: { mode: TravelMode; size?: number }) {
   return mode === 'ferry' ? (
     <Ship size={size} />
@@ -123,7 +115,7 @@ function ExecutionPage() {
         .state,
   );
   const [full, setFull] = useState(false);
-  const [detail, setDetail] = useState<number | null>(null);
+  const [detail, setDetail] = useState<StopId | null>(null);
   const [feedback, setFeedback] = useState('');
   const initialExecution = useRef(execution);
 
@@ -136,12 +128,10 @@ function ExecutionPage() {
   }, []);
 
   const started = execution.executionDayId !== undefined;
-  const currentIndex = execution.currentStopId
-    ? copenhagenTrip.stops.findIndex(
-        (stop) => stop.id === execution.currentStopId,
-      )
-    : -1;
-  const current = currentIndex >= 0 ? copenhagenTrip.stops[currentIndex] : null;
+  const location = useForegroundLocation(started);
+  const current =
+    copenhagenTrip.stops.find((stop) => stop.id === execution.currentStopId) ??
+    null;
   const firstPreparedStopId = orderedPlan[0]?.stopId;
   const firstPreparedStop = copenhagenTrip.stops.find(
     (stop) => stop.id === firstPreparedStopId,
@@ -150,14 +140,19 @@ function ExecutionPage() {
   const nextStopId = started
     ? nextEligiblePendingStopId(copenhagenTrip, execution)
     : orderedPlan[1]?.stopId;
-  const nextIndex = nextStopId
-    ? copenhagenTrip.stops.findIndex((stop) => stop.id === nextStopId)
-    : -1;
-  const nextStop = nextIndex >= 0 ? copenhagenTrip.stops[nextIndex] : null;
+  const nextStop =
+    copenhagenTrip.stops.find((stop) => stop.id === nextStopId) ?? null;
+  const detailStop =
+    copenhagenTrip.stops.find((stop) => stop.id === detail) ?? null;
   const completed = Object.values(execution.stopExecutions).filter(
     (stopExecution) => stopExecution.status === 'completed',
   ).length;
   const noAvailableCurrent = started && current === null;
+
+  function planNumber(stopId: StopId): number | undefined {
+    const index = orderedPlan.findIndex((item) => item.stopId === stopId);
+    return index < 0 ? undefined : index + 1;
+  }
 
   function presentationStatus(stopId: StopId): PresentationStatus {
     const stopExecution = execution.stopExecutions[stopId];
@@ -173,22 +168,19 @@ function ExecutionPage() {
     return 'future';
   }
 
-  const statuses = copenhagenTrip.stops.map((stop) =>
-    presentationStatus(stop.id),
+  const mapView = useMemo(
+    () =>
+      deriveRouteMapView(
+        copenhagenTrip,
+        execution,
+        location.status === 'available' ? location.coordinates : undefined,
+      ),
+    [execution, location],
   );
-  const mapState: RouteMapState = {
-    current: currentIndex,
-    started,
-    skipped:
-      execution.stopExecutions[
-        copenhagenTrip.stops.find((stop) => stop.name === 'Reffen')!.id
-      ].status === 'skipped',
-    saved: statuses.flatMap((status, index) =>
-      status === 'saved' ? [index] : [],
-    ),
-    ended: false,
-    statuses,
-  };
+  const navigationUrl = currentGoogleMapsNavigationUrl(
+    copenhagenTrip,
+    execution,
+  );
 
   function apply(
     result: TransitionResult,
@@ -207,11 +199,35 @@ function ExecutionPage() {
     setFeedback(message(persisted.state));
   }
 
-  function beginDay() {
-    apply(
-      startDay(copenhagenTrip, execution, day.id, new Date().toISOString()),
-      () => `${firstPreparedStop?.name ?? 'The first stop'} is now Current.`,
+  function beginDayTransition() {
+    const result = startDayAndBuildNavigation(
+      copenhagenTrip,
+      execution,
+      day.id,
+      new Date().toISOString(),
     );
+    if (result.status === 'rejected') {
+      setFeedback(result.result.error.message);
+      return result;
+    }
+    setExecution(result.result.state);
+    setFeedback(
+      result.result.persistence.status === 'saved'
+        ? `${firstPreparedStop?.name ?? 'The first stop'} is now Current.`
+        : `${firstPreparedStop?.name ?? 'The first stop'} is now Current. Local save is unavailable.`,
+    );
+    return result;
+  }
+
+  function beginDay() {
+    beginDayTransition();
+  }
+
+  function beginDayAndNavigate() {
+    const result = beginDayTransition();
+    if (result.status === 'accepted' && result.navigationUrl) {
+      window.location.assign(result.navigationUrl);
+    }
   }
 
   function done() {
@@ -323,12 +339,7 @@ function ExecutionPage() {
         <div className="workspace">
           <div className="map-column">
             <section className="map-panel">
-              <RouteMap
-                stops={mapStops}
-                trip={mapState}
-                onStop={setDetail}
-                showCurrentPosition={false}
-              />
+              <RouteMap view={mapView} location={location} onStop={setDetail} />
               <button className="map-expand" onClick={() => setFull(true)}>
                 <Expand size={17} />
                 Full map
@@ -368,18 +379,10 @@ function ExecutionPage() {
                 <>
                   <button
                     className="now stop-open"
-                    onClick={() =>
-                      setDetail(
-                        copenhagenTrip.stops.findIndex(
-                          (stop) => stop.id === displayedStop.id,
-                        ),
-                      )
-                    }
+                    onClick={() => setDetail(displayedStop.id)}
                   >
                     <span className="big-number">
-                      {copenhagenTrip.stops.findIndex(
-                        (stop) => stop.id === displayedStop.id,
-                      ) + 1}
+                      {planNumber(displayedStop.id) ?? '—'}
                     </span>
                     <div>
                       <h2>{displayedStop.name}</h2>
@@ -399,7 +402,7 @@ function ExecutionPage() {
                   {nextStop && (
                     <button
                       className="next-step stop-open"
-                      onClick={() => setDetail(nextIndex)}
+                      onClick={() => setDetail(nextStop.id)}
                     >
                       <span className="next-arrow">
                         <ArrowRight size={21} />
@@ -429,10 +432,19 @@ function ExecutionPage() {
                     </button>
                   )}
                   <div className="actions">
-                    {!started && (
-                      <button className="secondary" disabled>
-                        Navigation coming later
+                    {!started ? (
+                      <button
+                        className="secondary"
+                        onClick={beginDayAndNavigate}
+                      >
+                        <Navigation size={20} /> Start &amp; navigate
                       </button>
+                    ) : (
+                      navigationUrl && (
+                        <a className="secondary" href={navigationUrl}>
+                          <Navigation size={20} /> Navigate
+                        </a>
+                      )
                     )}
                     <button
                       className="primary"
@@ -445,7 +457,7 @@ function ExecutionPage() {
                   <p className="action-context">
                     {started
                       ? `Done completes ${displayedStop.name}.`
-                      : 'Start Day creates Current. Navigation is not enabled yet.'}
+                      : 'Start Day stays in RouteRunner. Start & navigate also opens Google Maps.'}
                   </p>
                 </>
               ) : null}
@@ -475,9 +487,6 @@ function ExecutionPage() {
                   const stop = copenhagenTrip.stops.find(
                     (candidate) => candidate.id === item.stopId,
                   )!;
-                  const stopIndex = copenhagenTrip.stops.findIndex(
-                    (candidate) => candidate.id === stop.id,
-                  );
                   const status = presentationStatus(stop.id);
                   const previousItem = orderedPlan[planIndex - 1];
                   const previousStop = previousItem
@@ -503,7 +512,7 @@ function ExecutionPage() {
                         )}
                       <button
                         className="itinerary-stop"
-                        onClick={() => setDetail(stopIndex)}
+                        onClick={() => setDetail(stop.id)}
                         aria-label={`${stop.name}, ${status}, ${stop.priority}`}
                       >
                         <span
@@ -558,8 +567,7 @@ function ExecutionPage() {
           <span className="footer-brand">RouteRunner</span>
           <p>Your AI plans. RouteRunner executes.</p>
           <small>
-            Local browser execution · schedule projection, live routing and GPS
-            are not available yet.
+            Local browser execution · foreground location · prepared route only
           </small>
         </footer>
       </main>
@@ -578,16 +586,15 @@ function ExecutionPage() {
             </span>
           </div>
           <DialogDescription className="sr-only">
-            Full static route map. Closing returns to the unchanged execution
-            state.
+            Full geographic route map. Closing returns to the unchanged
+            execution state.
           </DialogDescription>
           <div className="full-map-body">
             <RouteMap
-              stops={mapStops}
-              trip={mapState}
+              view={mapView}
+              location={location}
               onStop={setDetail}
               full
-              showCurrentPosition={false}
             />
           </div>
           <div className="full-bottom">
@@ -621,14 +628,13 @@ function ExecutionPage() {
           showCloseButton={false}
           className="stop-sheet"
         >
-          {detail !== null && (
+          {detail !== null && detailStop && (
             <>
               <div className="sheet-top">
                 <span className="eyebrow">
-                  STOP {detail + 1} OF {copenhagenTrip.stops.length} ·{' '}
-                  {presentationStatus(
-                    copenhagenTrip.stops[detail].id,
-                  ).toUpperCase()}
+                  STOP {planNumber(detailStop.id) ?? '—'} OF{' '}
+                  {copenhagenTrip.stops.length} ·{' '}
+                  {presentationStatus(detailStop.id).toUpperCase()}
                 </span>
                 <SheetClose
                   className="sheet-close"
@@ -638,16 +644,14 @@ function ExecutionPage() {
                 </SheetClose>
               </div>
               <SheetTitle className="detail-title">
-                {copenhagenTrip.stops[detail].name}
+                {detailStop.name}
               </SheetTitle>
               <SheetDescription className="detail-description">
-                {copenhagenTrip.stops[detail].plannedVisitMinutes} min to
-                explore
+                {detailStop.plannedVisitMinutes} min to explore
                 {' · '}
-                {priorityLabel(copenhagenTrip.stops[detail])}
+                {priorityLabel(detailStop)}
               </SheetDescription>
-              {copenhagenTrip.stops[detail].id ===
-                copenhagenStopIds.kastellet && (
+              {detailStop.id === copenhagenStopIds.kastellet && (
                 <figure className="stop-photo">
                   <img
                     src="https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Kastellet_aerial.jpg/1280px-Kastellet_aerial.jpg"
@@ -677,7 +681,7 @@ function ExecutionPage() {
                 This stop remains in the immutable Copenhagen plan. Runtime
                 actions update only its trip execution state.
               </p>
-              {started && detail === currentIndex && nextStop && (
+              {started && detail === execution.currentStopId && nextStop && (
                 <div className="detail-next">
                   <ArrowRight size={20} />
                   <div>
@@ -687,7 +691,7 @@ function ExecutionPage() {
                 </div>
               )}
               <div className="actions">
-                {!started && detail === 0 && (
+                {!started && detail === firstPreparedStopId && (
                   <button
                     className="primary"
                     onClick={() => {
@@ -698,16 +702,23 @@ function ExecutionPage() {
                     <ArrowRight size={20} /> Start day
                   </button>
                 )}
-                {started && detail === currentIndex && current && (
-                  <button className="primary" onClick={done}>
-                    <Check size={20} /> Done
-                  </button>
+                {started && detail === execution.currentStopId && current && (
+                  <>
+                    {navigationUrl && (
+                      <a className="secondary" href={navigationUrl}>
+                        <Navigation size={20} /> Navigate
+                      </a>
+                    )}
+                    <button className="primary" onClick={done}>
+                      <Check size={20} /> Done
+                    </button>
+                  </>
                 )}
-                {(detail !== currentIndex || !started) && (
+                {(detail !== execution.currentStopId || !started) && (
                   <SheetClose className="primary">Back to day</SheetClose>
                 )}
               </div>
-              {started && detail === currentIndex && current && (
+              {started && detail === execution.currentStopId && current && (
                 <div className="sheet-secondary-actions">
                   {current.canSkip && <button onClick={skip}>Skip</button>}
                   <button onClick={saveCurrentForLater}>Save for later</button>

@@ -1,361 +1,280 @@
 'use client';
-import { useState } from 'react';
-import { Crosshair, Minus, Plus } from 'lucide-react';
 
-export type RouteMapStop = {
-  name: string;
-  kind: string;
-  x: number;
-  y: number;
-};
+import { useEffect, useRef, useState } from 'react';
+import type { Map as MapboxMap, Marker } from 'mapbox-gl';
+import type {
+  ForegroundLocationState,
+  RouteMapLegView,
+  RouteMapView,
+  StopId,
+} from '@/domain';
+import { mapboxTokenState } from '@/domain';
 
-export type RouteMapState = {
-  current: number;
-  started: boolean;
-  skipped: boolean;
-  saved: number[];
-  ended: boolean;
-  statuses?: Array<
-    'completed' | 'current' | 'next' | 'skipped' | 'saved' | 'future'
-  >;
-};
+const ROUTE_SOURCE_ID = 'routerunner-prepared-legs';
+const ROUTE_LAYER_IDS = [
+  'routerunner-walk-legs',
+  'routerunner-transit-legs',
+  'routerunner-ferry-legs',
+] as const;
+
+function routeGeoJson(legs: RouteMapLegView[]) {
+  return {
+    type: 'FeatureCollection',
+    features: legs.map((leg) => ({
+      type: 'Feature',
+      properties: {
+        legId: leg.legId,
+        mode: leg.mode,
+        representation: leg.representation,
+      },
+      geometry: { type: 'LineString', coordinates: leg.coordinates },
+    })),
+  };
+}
+
+function removeMarkers(markers: Map<string, Marker>): void {
+  for (const marker of markers.values()) marker.remove();
+  markers.clear();
+}
+
+function locationCaption(location: ForegroundLocationState): string {
+  switch (location.status) {
+    case 'inactive':
+      return 'Location starts with an active day';
+    case 'locating':
+      return 'Finding your foreground location…';
+    case 'available':
+      return `Location available · ±${Math.round(location.coordinates.accuracy)} m`;
+    case 'denied':
+      return 'Location denied · planned map remains available';
+    case 'unavailable':
+      return 'Location unavailable · planned map remains available';
+    case 'timeout':
+      return 'Location timed out · planned map remains available';
+    case 'error':
+      return 'Location error · planned map remains available';
+  }
+}
 
 export default function RouteMap({
-  stops,
-  trip,
+  view,
+  location,
   onStop,
   full = false,
-  showCurrentPosition = true,
 }: {
-  stops: readonly RouteMapStop[];
-  trip: RouteMapState;
-  onStop: (i: number) => void;
+  view: RouteMapView;
+  location: ForegroundLocationState;
+  onStop: (stopId: StopId) => void;
   full?: boolean;
-  showCurrentPosition?: boolean;
 }) {
-  const [zoom, setZoom] = useState(1);
-  const [center, setCenter] = useState([280, 270]);
-  const size = 560 / zoom;
-  const status = (i: number) => {
-    if (trip.statuses) return trip.statuses[i] ?? 'future';
-    if (trip.saved.includes(i)) return 'saved';
-    if (i === 5 && trip.skipped) return 'skipped';
-    if (i < trip.current) return 'completed';
-    if (!trip.started || trip.ended) return 'future';
-    if (i === trip.current) return 'current';
-    let next = trip.current + 1;
-    while (
-      next < stops.length &&
-      ((next === 5 && trip.skipped) || trip.saved.includes(next))
-    )
-      next++;
-    if (i === next) return 'next';
-    return 'future';
-  };
-  const currentStop = stops[Math.max(0, Math.min(trip.current, 6))];
-  const roads = [
-    'M0 105L330 340',
-    'M0 165L303 390',
-    'M0 220L260 431',
-    'M0 310L220 470',
-    'M45 0L360 242',
-    'M130 0L340 163',
-    'M0 450L289 58',
-    'M62 520L329 150',
-    'M0 320L245 0',
-    'M30 160L150 0',
-    'M85 520L290 240',
-  ];
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<MapboxMap | null>(null);
+  const moduleRef = useRef<typeof import('mapbox-gl') | null>(null);
+  const stopMarkersRef = useRef(new Map<string, Marker>());
+  const userMarkerRef = useRef<Marker | null>(null);
+  const viewRef = useRef(view);
+  const onStopRef = useRef(onStop);
+  const [runtimeError, setRuntimeError] = useState<string>();
+  const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+
+  function updateOverlays(map: MapboxMap): void {
+    const mapbox = moduleRef.current;
+    if (!mapbox || !map.isStyleLoaded()) return;
+
+    const routeSource = map.getSource(ROUTE_SOURCE_ID);
+    if (routeSource?.type === 'geojson') {
+      routeSource.setData(routeGeoJson(viewRef.current.legs));
+    }
+
+    removeMarkers(stopMarkersRef.current);
+    for (const stop of viewRef.current.stops) {
+      const markerButton = document.createElement('button');
+      markerButton.type = 'button';
+      markerButton.className = `mapbox-stop-marker ${stop.status} ${stop.priority}`;
+      markerButton.dataset.label = stop.name;
+      markerButton.textContent =
+        stop.status === 'completed'
+          ? '✓'
+          : stop.status === 'skipped'
+            ? '−'
+            : stop.status === 'saved'
+              ? '◇'
+              : String(stop.order);
+      markerButton.setAttribute(
+        'aria-label',
+        `${stop.order}. ${stop.name}, ${stop.status}, ${stop.priority}`,
+      );
+      markerButton.title = stop.name;
+      markerButton.addEventListener('click', () =>
+        onStopRef.current(stop.stopId),
+      );
+      const marker = new mapbox.default.Marker({
+        element: markerButton,
+        anchor: 'center',
+      })
+        .setLngLat([stop.longitude, stop.latitude])
+        .addTo(map);
+      stopMarkersRef.current.set(String(stop.stopId), marker);
+    }
+
+    userMarkerRef.current?.remove();
+    userMarkerRef.current = null;
+    if (viewRef.current.userLocation) {
+      const userElement = document.createElement('div');
+      userElement.className = 'mapbox-user-marker';
+      userElement.setAttribute('role', 'img');
+      userElement.setAttribute(
+        'aria-label',
+        'Your current foreground location',
+      );
+      userMarkerRef.current = new mapbox.default.Marker({
+        element: userElement,
+        anchor: 'center',
+      })
+        .setLngLat([
+          viewRef.current.userLocation.longitude,
+          viewRef.current.userLocation.latitude,
+        ])
+        .addTo(map);
+    }
+  }
+
+  useEffect(() => {
+    if (
+      mapboxTokenState(token) === 'missing' ||
+      !containerRef.current ||
+      mapRef.current
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const stopMarkers = stopMarkersRef.current;
+    void import('mapbox-gl')
+      .then((mapbox) => {
+        if (cancelled || !containerRef.current) return;
+        moduleRef.current = mapbox;
+        mapbox.default.accessToken = token!;
+        const firstStop = viewRef.current.stops[0];
+        const map = new mapbox.default.Map({
+          container: containerRef.current,
+          style: 'mapbox://styles/mapbox/streets-v12',
+          center: firstStop
+            ? [firstStop.longitude, firstStop.latitude]
+            : [0, 0],
+          zoom: firstStop ? 12.7 : 1,
+          attributionControl: true,
+        });
+        mapRef.current = map;
+        if (full) map.addControl(new mapbox.default.NavigationControl());
+        map.on('load', () => {
+          map.addSource(ROUTE_SOURCE_ID, {
+            type: 'geojson',
+            data: routeGeoJson(viewRef.current.legs),
+          });
+          const routeLayers = [
+            {
+              id: ROUTE_LAYER_IDS[0],
+              mode: 'walk',
+              color: '#176b50',
+              dash: [1, 2],
+            },
+            {
+              id: ROUTE_LAYER_IDS[1],
+              mode: 'transit',
+              color: '#596f67',
+              dash: [4, 2],
+            },
+            {
+              id: ROUTE_LAYER_IDS[2],
+              mode: 'ferry',
+              color: '#327895',
+              dash: [2, 2],
+            },
+          ] as const;
+          for (const layer of routeLayers) {
+            map.addLayer({
+              id: layer.id,
+              type: 'line',
+              source: ROUTE_SOURCE_ID,
+              filter: ['==', ['get', 'mode'], layer.mode],
+              paint: {
+                'line-color': layer.color,
+                'line-width': 3,
+                'line-dasharray': [...layer.dash],
+              },
+            });
+          }
+          updateOverlays(map);
+          if (viewRef.current.stops.length > 1) {
+            const bounds = new mapbox.default.LngLatBounds();
+            for (const stop of viewRef.current.stops) {
+              bounds.extend([stop.longitude, stop.latitude]);
+            }
+            map.fitBounds(bounds, { padding: full ? 80 : 48, duration: 0 });
+          }
+        });
+        map.on('error', () => {
+          setRuntimeError('Map tiles are temporarily unavailable.');
+        });
+      })
+      .catch(() => setRuntimeError('Mapbox could not be initialized.'));
+
+    return () => {
+      cancelled = true;
+      removeMarkers(stopMarkers);
+      userMarkerRef.current?.remove();
+      userMarkerRef.current = null;
+      mapRef.current?.remove();
+      mapRef.current = null;
+      moduleRef.current = null;
+    };
+  }, [full, token]);
+
+  useEffect(() => {
+    viewRef.current = view;
+    onStopRef.current = onStop;
+    const map = mapRef.current;
+    if (map) updateOverlays(map);
+  }, [onStop, view]);
+
+  if (mapboxTokenState(token) === 'missing') {
+    return (
+      <div className={`route-map map-unavailable ${full ? 'is-full' : ''}`}>
+        <div>
+          <strong>Map unavailable</strong>
+          <span>
+            Add NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN to show the geographic map.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={`route-map ${full ? 'is-full' : ''}`}>
-      <svg
-        role="img"
-        aria-label={
-          showCurrentPosition
-            ? 'Schematic Copenhagen map with seven stops, route segments and a simulated current position'
-            : 'Schematic Copenhagen map with seven stops, static route segments and no live location'
-        }
-        viewBox={`${center[0] - size / 2} ${center[1] - size / 2} ${size} ${size}`}
-      >
-        <defs>
-          <pattern
-            id={full ? 'blocks-full' : 'blocks'}
-            width="49"
-            height="42"
-            patternTransform="rotate(36)"
-            patternUnits="userSpaceOnUse"
-          >
-            <rect
-              x="5"
-              y="5"
-              width="36"
-              height="29"
-              rx="3"
-              fill="#e0e4dc"
-              stroke="#d7ddd4"
-              strokeWidth="1"
-            />
-          </pattern>
-        </defs>
-        <rect x="-1000" y="-1000" width="3000" height="3000" fill="#edf0e8" />
-        <path
-          d="M-100 -100H445L355 73 354 159 323 229 346 297 301 358 274 450 270 600H-100Z"
-          fill={`url(#${full ? 'blocks-full' : 'blocks'})`}
-        />
-        <g stroke="#fafbf7" strokeWidth="12" fill="none">
-          {roads.map((d) => (
-            <path key={d} d={d} />
-          ))}
-        </g>
-        <path
-          d="M422 -100L365 20 349 90 349 164 320 230 343 292 300 351 270 448 263 600H330L335 480 377 407 393 337 432 285 415 228 474 165 524 72 650 -100Z"
-          fill="#bdd5db"
-        />
-        <path
-          d="M310 339L229 367 196 399 172 460"
-          fill="none"
-          stroke="#bdd5db"
-          strokeWidth="13"
-        />
-        <path
-          d="M429 290L495 309 520 404 419 475 348 480 382 408 398 349Z"
-          fill={`url(#${full ? 'blocks-full' : 'blocks'})`}
-        />
-        <path
-          d="M425 66L519 35 557 112 493 192 432 211 410 169Z"
-          fill="#e0e5dc"
-        />
-        <path
-          d="M198 105L247 90 298 119 318 174 277 211 225 212 193 164Z"
-          fill="#cadcbd"
-        />
-        <path
-          d="M217 142L236 124 252 141 278 129 283 158 300 178 271 186 253 205 237 180 211 179Z"
-          fill="#a8c596"
-          stroke="#91b6a5"
-          strokeWidth="7"
-        />
-        <path d="M32 385L76 335 133 377 95 438Z" fill="#cadcbd" />
-        <g fill="#64716a" fontSize="10" fontWeight="500" letterSpacing="2">
-          <text x="44" y="276" transform="rotate(-53 44 276)">
-            BREDGADE
-          </text>
-          <text x="49" y="183">
-            FREDERIKSSTADEN
-          </text>
-          <text x="47" y="482">
-            INDRE BY
-          </text>
-          <text x="424" y="388" transform="rotate(-52 424 388)">
-            CHRISTIANSHAVN
-          </text>
-          <text x="462" y="98" transform="rotate(-42 462 98)">
-            REFSHALEØEN
-          </text>
-          <text x="375" y="262" fill="#50717c" transform="rotate(-57 375 262)">
-            KØBENHAVNS HAVN
-          </text>
-        </g>
-        {stops.slice(1).map((s, j) => {
-          const i = j + 1;
-          const state = status(i);
-          const previousState = status(i - 1);
-          if (
-            state === 'skipped' ||
-            state === 'saved' ||
-            previousState === 'saved'
-          )
-            return null;
-          const from =
-            previousState === 'skipped' && i > 1 ? stops[i - 2] : stops[i - 1];
-          const transit = i >= 5;
-          const ferry = i === 5;
-          const done = state === 'completed';
-          return (
-            <g key={i}>
-              <path
-                d={`M${from.x} ${from.y} L${s.x} ${s.y}`}
-                stroke="#fff"
-                strokeWidth="7"
-                fill="none"
-              />
-              <path
-                d={`M${from.x} ${from.y} L${s.x} ${s.y}`}
-                stroke={
-                  done
-                    ? '#829c8d'
-                    : state === 'next'
-                      ? '#166b50'
-                      : ferry
-                        ? '#427e94'
-                        : '#667e74'
-                }
-                strokeWidth={state === 'next' ? 4 : 3}
-                strokeDasharray={
-                  transit ? (ferry ? '8 6' : '16 7') : done ? '0' : '3 6'
-                }
-                strokeLinecap="round"
-                fill="none"
-              />
-            </g>
-          );
-        })}
-        {stops.map((s, i) => {
-          const st = status(i);
-          const active = st === 'current';
-          const labelLeft = i === 4 || i === 5;
-          return (
-            <g
-              key={s.name}
-              className={`map-pin ${st}`}
-              role="button"
-              tabIndex={0}
-              aria-label={`${i + 1}. ${s.name}, ${st}${s.kind === 'optional' ? ', optional' : ''}`}
-              onClick={() => onStop(i)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  onStop(i);
-                }
-              }}
-            >
-              <circle cx={s.x} cy={s.y} r="25" fill="transparent" />
-              {active && (
-                <circle cx={s.x} cy={s.y} r="27" fill="#166b50" opacity=".15" />
-              )}
-              {s.kind === 'optional' || st === 'saved' ? (
-                <rect
-                  x={s.x - 15}
-                  y={s.y - 15}
-                  width="30"
-                  height="30"
-                  rx="5"
-                  transform={`rotate(45 ${s.x} ${s.y})`}
-                  fill={
-                    st === 'skipped' || st === 'saved' ? '#edf0e8' : 'white'
-                  }
-                  stroke="#64756a"
-                  strokeWidth="2"
-                />
-              ) : (
-                <circle
-                  cx={s.x}
-                  cy={s.y}
-                  r={active ? 19 : 15}
-                  fill={
-                    active ? '#176b50' : st === 'completed' ? '#dfe9df' : '#fff'
-                  }
-                  stroke={active || st === 'next' ? '#176b50' : '#718577'}
-                  strokeWidth={st === 'next' ? 3 : 2}
-                />
-              )}
-              <text
-                x={s.x}
-                y={s.y + 5}
-                textAnchor="middle"
-                fill={active ? 'white' : '#274c3b'}
-                fontSize="14"
-                fontWeight="700"
-              >
-                {st === 'completed'
-                  ? '✓'
-                  : st === 'skipped'
-                    ? '−'
-                    : st === 'saved'
-                      ? '◇'
-                      : i + 1}
-              </text>
-              <text
-                x={labelLeft ? s.x - 24 : s.x + 25}
-                y={s.y + (i === 1 ? 6 : -5)}
-                textAnchor={labelLeft ? 'end' : 'start'}
-                fill="#243c31"
-                stroke="#eef1e9"
-                strokeWidth="5"
-                paintOrder="stroke"
-                fontWeight={active ? 700 : 500}
-                fontSize={active ? 15 : 12}
-              >
-                {s.name}
-              </text>
-            </g>
-          );
-        })}
-        {showCurrentPosition &&
-          trip.started &&
-          trip.current >= 0 &&
-          trip.current < 7 &&
-          !trip.ended && (
-            <g>
-              <circle
-                cx={currentStop.x - 22}
-                cy={currentStop.y + 25}
-                r="15"
-                fill="#2978b1"
-                opacity=".14"
-              />
-              <circle
-                cx={currentStop.x - 22}
-                cy={currentStop.y + 25}
-                r="7"
-                fill="#2678b4"
-                stroke="white"
-                strokeWidth="3"
-              />
-            </g>
-          )}
-      </svg>
+    <div className={`route-map mapbox-route-map ${full ? 'is-full' : ''}`}>
+      <div
+        ref={containerRef}
+        className="mapbox-canvas"
+        aria-label="Route map"
+      />
       <div className="map-topline">
         <span>
           <i /> Route overview
         </span>
         <span className="north">↑ N</span>
       </div>
-      <div className="map-caption">
-        Schematic map ·{' '}
-        {showCurrentPosition ? 'demo location' : 'no live location'}
-      </div>
-      {full && (
-        <div className="zoom-controls">
-          <button
-            aria-label="Zoom in"
-            disabled={zoom >= 2}
-            onClick={() => setZoom((z) => Math.min(2, z + 0.25))}
-          >
-            <Plus />
-          </button>
-          <button
-            aria-label="Zoom out"
-            disabled={zoom <= 1}
-            onClick={() => {
-              setZoom((z) => Math.max(1, z - 0.25));
-              setCenter([280, 270]);
-            }}
-          >
-            <Minus />
-          </button>
-          {(showCurrentPosition ||
-            (trip.current >= 0 && trip.current < stops.length)) && (
-            <button
-              aria-label="Center on current stop"
-              onClick={() => {
-                setCenter([currentStop.x, currentStop.y]);
-                setZoom(1.75);
-              }}
-            >
-              <Crosshair />
-            </button>
-          )}
-          <button
-            onClick={() => {
-              setZoom(1);
-              setCenter([280, 270]);
-            }}
-          >
-            All
-          </button>
-        </div>
-      )}
+      <output className="map-caption">
+        <span>{locationCaption(location)}</span>
+        <span>
+          {view.routePresentation === 'schematic-endpoints'
+            ? 'Prepared schematic connections · not live routing'
+            : view.routePresentation === 'prepared-geometry'
+              ? 'Prepared route geometry · not live routing'
+              : 'Prepared route geometry unavailable'}
+        </span>
+        {runtimeError && <span>{runtimeError}</span>}
+      </output>
     </div>
   );
 }

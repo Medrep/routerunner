@@ -14,7 +14,7 @@ import {
   Ship,
   TrainFront,
 } from 'lucide-react';
-import RouteMap from '@/components/routerunner/route-map';
+import RouteMap from '@/components/routerunner/design-route-map';
 import {
   normal,
   stops,

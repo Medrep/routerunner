@@ -5,7 +5,10 @@
 - Repository: `/Users/alexkucheruk/Projects/RouteRunner`
 - Branch: `main`
 - Baseline commit: `e1c209c18656d0460e0e58d0c584d96422bcd8e4`
-- Implementation commit: the bounded commit containing this artifact; its full hash is recorded in the closing implementation report.
+- Original RR-MVP-06 implementation commit:
+  `34aeac2883405beff5367bd0c0f5337604c56710`
+- RR-MVP-06 audit correction commit:
+  `ba0b892052dfb04ca1ab564e9c5d444225e36864`
 
 ## Mapbox integration
 
@@ -50,6 +53,17 @@ threshold, arrival state, or automatic execution transition.
 
 Location is not part of `TripExecutionState` and is never passed to persistence.
 Reload restores execution independently and creates a new foreground watch.
+
+### Targeted lifecycle audit correction
+
+RR-MVP-06-AUD-001 is corrected with a private, monotonically increasing watch
+generation. Every success and error callback captures its generation and may
+emit only while that generation is current, the controller is not disposed,
+execution tracking remains active, and the page remains visible. Stop,
+visibility hide, deactivation, replacement, and disposal invalidate the
+generation and clear active watch identity before calling browser `clearWatch`.
+Retained stale callbacks are therefore inert and a stale error cannot clear a
+newer watch.
 
 ## Map execution semantics
 
@@ -99,7 +113,8 @@ path but performs no external navigation.
 
 ## Verification
 
-- `npm test`: PASS, 142 total tests, 19 new RR-MVP-06 tests.
+- `npm test`: PASS, 147 total tests, including the 19 original RR-MVP-06 tests
+  and 5 new adversarial lifecycle tests.
 - `npm run typecheck`: PASS.
 - `npm run build`: PASS; `/` and `/design-board` were emitted.
 - Focused lint: new RR-MVP-06 code clean; three inherited findings surfaced in
@@ -119,6 +134,8 @@ scenario were not reproduced because no local Mapbox token was configured and
 the available browser surface did not provide isolated permission control.
 Their surrounding boundaries are covered by deterministic tests without a real
 token.
+
+REAL MAPBOX SMOKE NOT PERFORMED — TOKEN UNAVAILABLE.
 
 ## Deferred functionality
 

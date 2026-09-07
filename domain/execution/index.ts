@@ -5,6 +5,7 @@ export {
   EXECUTION_STATE_SCHEMA_VERSION,
   executionStorageKey,
   loadExecutionState,
+  persistExecutionTransition,
   restoreOrCreateExecutionState,
   saveExecutionState,
 } from './persistence.ts';
@@ -37,6 +38,7 @@ export type {
   ExecutionStateEnvelope,
   ExecutionStorage,
   LoadExecutionStateResult,
+  PersistExecutionTransitionResult,
   RestoredOrFreshExecutionState,
   SaveExecutionStateResult,
 } from './persistence.ts';

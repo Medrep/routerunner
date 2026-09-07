@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -40,6 +40,7 @@ import {
   completeCurrentStop,
   nextEligiblePendingStopId,
   orderedDayPlan,
+  persistExecutionTransition,
   restoreOrCreateExecutionState,
   saveCurrentForLater as saveCurrentForLaterTransition,
   saveExecutionState,
@@ -124,10 +125,15 @@ function ExecutionPage() {
   const [full, setFull] = useState(false);
   const [detail, setDetail] = useState<number | null>(null);
   const [feedback, setFeedback] = useState('');
+  const initialExecution = useRef(execution);
 
   useEffect(() => {
-    saveExecutionState(copenhagenTrip, execution, execution.lastUpdatedAt);
-  }, [execution]);
+    saveExecutionState(
+      copenhagenTrip,
+      initialExecution.current,
+      initialExecution.current.lastUpdatedAt,
+    );
+  }, []);
 
   const started = execution.executionDayId !== undefined;
   const currentIndex = execution.currentStopId
@@ -188,12 +194,17 @@ function ExecutionPage() {
     result: TransitionResult,
     message: (state: TripExecutionState) => string,
   ) {
-    if (!result.ok) {
-      setFeedback(result.error.message);
+    const persisted = persistExecutionTransition(
+      copenhagenTrip,
+      execution,
+      result,
+    );
+    if (persisted.status === 'rejected') {
+      setFeedback(persisted.error.message);
       return;
     }
-    setExecution(result.state);
-    setFeedback(message(result.state));
+    setExecution(persisted.state);
+    setFeedback(message(persisted.state));
   }
 
   function beginDay() {

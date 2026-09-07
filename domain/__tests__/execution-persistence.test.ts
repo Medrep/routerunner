@@ -15,6 +15,7 @@ import {
   EXECUTION_STATE_SCHEMA_VERSION,
   executionStorageKey,
   loadExecutionState,
+  persistExecutionTransition,
   restoreOrCreateExecutionState,
   saveCurrentForLater,
   saveExecutionState,
@@ -25,6 +26,7 @@ import type {
   ExecutionStorage,
   StopId,
   TransitionResult,
+  Trip,
   TripExecutionState,
 } from '../index.ts';
 
@@ -41,10 +43,14 @@ type MutableEnvelope = {
     tripId: string;
     currentStopId?: string;
     executionDayId?: string;
+    executionDayStartedAt?: string;
+    currentStepStartedAt?: string;
+    currentInboundTravel?: Record<string, unknown>;
     lastUpdatedAt: string;
     stopExecutions: Record<string, Record<string, unknown>>;
     doNowQueue: Array<Record<string, unknown>>;
     completedDayIds: string[];
+    ruleAcknowledgements: Array<Record<string, unknown>>;
   };
 };
 
@@ -258,6 +264,7 @@ void test('rejects incompatible and structurally invalid persisted states', asyn
   const cases: Array<{
     name: string;
     mutate: (envelope: MutableEnvelope) => void;
+    trip?: Trip;
   }> = [
     {
       name: 'unsupported envelope version',
@@ -374,6 +381,152 @@ void test('rejects incompatible and structurally invalid persisted states', asyn
         };
       },
     },
+    {
+      name: 'Current StopExecution is completed',
+      mutate: (envelope) => {
+        const current = envelope.state.stopExecutions[copenhagenStopIds.nyhavn];
+        current.status = 'completed';
+        current.completedRecordedAt = changedAt;
+        current.completedOnDayId = dayId;
+      },
+    },
+    {
+      name: 'Current StopExecution is skipped',
+      mutate: (envelope) => {
+        envelope.state.stopExecutions[copenhagenStopIds.nyhavn].status =
+          'skipped';
+      },
+    },
+    {
+      name: 'pending StopExecution has completedRecordedAt',
+      mutate: (envelope) => {
+        envelope.state.stopExecutions[
+          copenhagenStopIds.amalienborg
+        ].completedRecordedAt = changedAt;
+      },
+    },
+    {
+      name: 'pending StopExecution has completedOnDayId',
+      mutate: (envelope) => {
+        envelope.state.stopExecutions[
+          copenhagenStopIds.amalienborg
+        ].completedOnDayId = dayId;
+      },
+    },
+    {
+      name: 'skipped StopExecution has completion history',
+      mutate: (envelope) => {
+        const skipped =
+          envelope.state.stopExecutions[copenhagenStopIds.amalienborg];
+        skipped.status = 'skipped';
+        skipped.completedRecordedAt = changedAt;
+        skipped.completedOnDayId = dayId;
+      },
+    },
+    {
+      name: 'completed StopExecution is missing completedRecordedAt',
+      mutate: (envelope) => {
+        const completed =
+          envelope.state.stopExecutions[copenhagenStopIds.amalienborg];
+        completed.status = 'completed';
+        completed.completedOnDayId = dayId;
+      },
+    },
+    {
+      name: 'completed StopExecution is missing completedOnDayId',
+      mutate: (envelope) => {
+        const completed =
+          envelope.state.stopExecutions[copenhagenStopIds.amalienborg];
+        completed.status = 'completed';
+        completed.completedRecordedAt = changedAt;
+      },
+    },
+    {
+      name: 'active execution day is missing its start timestamp',
+      mutate: (envelope) => {
+        delete envelope.state.executionDayStartedAt;
+      },
+    },
+    {
+      name: 'Current is missing its step timestamp',
+      mutate: (envelope) => {
+        delete envelope.state.currentStepStartedAt;
+      },
+    },
+    {
+      name: 'Current is missing inbound travel',
+      mutate: (envelope) => {
+        delete envelope.state.currentInboundTravel;
+      },
+    },
+    {
+      name: 'inbound travel targets a different Stop',
+      mutate: (envelope) => {
+        envelope.state.currentInboundTravel!.toStopId =
+          copenhagenStopIds.amalienborg;
+      },
+    },
+    {
+      name: 'Current is unscheduled',
+      mutate: (envelope) => {
+        envelope.state.stopExecutions[copenhagenStopIds.nyhavn].scheduledDayId =
+          null;
+      },
+    },
+    {
+      name: 'Current is scheduled to another canonical day',
+      trip: {
+        ...copenhagenTrip,
+        endDate: '2026-09-09',
+        days: [
+          ...copenhagenTrip.days,
+          { id: 'copenhagen-day-2', date: '2026-09-09', plan: [] },
+        ],
+      },
+      mutate: (envelope) => {
+        envelope.state.stopExecutions[copenhagenStopIds.nyhavn].scheduledDayId =
+          'copenhagen-day-2';
+      },
+    },
+    {
+      name: 'Current is not the first eligible pending Stop',
+      mutate: (envelope) => {
+        envelope.state.currentStopId = copenhagenStopIds.amalienborg;
+        envelope.state.currentInboundTravel!.toStopId =
+          copenhagenStopIds.amalienborg;
+      },
+    },
+    {
+      name: 'Current is absent with stale currentStepStartedAt',
+      mutate: (envelope) => {
+        delete envelope.state.currentStopId;
+        delete envelope.state.currentInboundTravel;
+      },
+    },
+    {
+      name: 'Current is absent with stale inbound travel',
+      mutate: (envelope) => {
+        delete envelope.state.currentStopId;
+        delete envelope.state.currentStepStartedAt;
+      },
+    },
+    {
+      name: 'execution day is absent with stale start metadata',
+      mutate: (envelope) => {
+        delete envelope.state.executionDayId;
+        delete envelope.state.currentStopId;
+        delete envelope.state.currentStepStartedAt;
+        delete envelope.state.currentInboundTravel;
+      },
+    },
+    {
+      name: 'unknown rule acknowledgement',
+      mutate: (envelope) => {
+        envelope.state.ruleAcknowledgements = [
+          { ruleId: 'removed-rule', acknowledgedAt: changedAt },
+        ];
+      },
+    },
   ];
 
   for (const invalidCase of cases) {
@@ -382,7 +535,7 @@ void test('rejects incompatible and structurally invalid persisted states', asyn
       invalidCase.mutate(envelope);
       const result = deserializeExecutionState(
         JSON.stringify(envelope),
-        copenhagenTrip,
+        invalidCase.trip ?? copenhagenTrip,
       );
       assert.equal(result.status, 'invalid');
     });
@@ -483,6 +636,68 @@ void test('a failed transition leaves the last accepted persisted envelope uncha
   assert.equal(storage.writes, 1);
 });
 
+void test('runtime session orchestration restores state and persists an accepted transition', () => {
+  const storage = roundTrip(activeState()).storage;
+  const restored = restoreOrCreateExecutionState(
+    copenhagenTrip,
+    changedAt,
+    storage,
+  );
+  assert.equal(restored.loadResult.status, 'restored');
+
+  const transition = completeCurrentStop(
+    copenhagenTrip,
+    restored.state,
+    changedAt,
+  );
+  const persisted = persistExecutionTransition(
+    copenhagenTrip,
+    restored.state,
+    transition,
+    storage,
+  );
+  assert.equal(persisted.status, 'accepted');
+  assert.equal(persisted.persistence.status, 'saved');
+  assert.equal(persisted.state.currentStopId, copenhagenStopIds.amalienborg);
+
+  const reloaded = loadExecutionState(copenhagenTrip, storage);
+  assert.equal(reloaded.status, 'restored');
+  assert.deepEqual(reloaded.state, persisted.state);
+});
+
+void test('runtime session orchestration retains accepted state after write failure', () => {
+  const current = activeState();
+  const transition = completeCurrentStop(copenhagenTrip, current, changedAt);
+  const storage = new FakeStorage();
+  storage.writeError = new Error('quota exceeded');
+
+  const persisted = persistExecutionTransition(
+    copenhagenTrip,
+    current,
+    transition,
+    storage,
+  );
+  assert.equal(persisted.status, 'accepted');
+  assert.equal(persisted.persistence.status, 'unavailable');
+  assert.equal(persisted.state.currentStopId, copenhagenStopIds.amalienborg);
+});
+
+void test('runtime session orchestration rejects denied transitions without saving', () => {
+  const current = activeState();
+  const denied = startDay(copenhagenTrip, current, dayId, changedAt);
+  const storage = new FakeStorage();
+
+  const persisted = persistExecutionTransition(
+    copenhagenTrip,
+    current,
+    denied,
+    storage,
+  );
+  assert.equal(persisted.status, 'rejected');
+  assert.equal(persisted.state, current);
+  assert.equal(storage.writes, 0);
+});
+
 void test('production page restores once hydrated and persists authoritative changes', () => {
   const pageSource = readFileSync(
     new URL('../../app/page.tsx', import.meta.url),
@@ -490,7 +705,7 @@ void test('production page restores once hydrated and persists authoritative cha
   );
 
   assert.match(pageSource, /restoreOrCreateExecutionState\(/);
-  assert.match(pageSource, /saveExecutionState\(/);
+  assert.match(pageSource, /persistExecutionTransition\(/);
   assert.match(pageSource, /useSyncExternalStore\(/);
   assert.doesNotMatch(pageSource, /design-reference/);
   assert.doesNotMatch(pageSource, /localStorage/);

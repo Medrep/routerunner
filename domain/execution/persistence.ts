@@ -9,6 +9,8 @@ import type {
   TripExecutionState,
 } from './types.ts';
 import { createInitialTripExecutionState } from './create-execution-state.ts';
+import { firstEligiblePendingStopId } from './transitions.ts';
+import type { TransitionError, TransitionResult } from './transitions.ts';
 
 export const EXECUTION_STATE_SCHEMA_VERSION = 1;
 
@@ -46,6 +48,18 @@ export interface RestoredOrFreshExecutionState {
   state: TripExecutionState;
   loadResult: LoadExecutionStateResult;
 }
+
+export type PersistExecutionTransitionResult =
+  | {
+      status: 'accepted';
+      state: TripExecutionState;
+      persistence: SaveExecutionStateResult;
+    }
+  | {
+      status: 'rejected';
+      state: TripExecutionState;
+      error: TransitionError;
+    };
 
 export function executionStorageKey(tripId: string): string {
   return `routerunner:execution:${tripId}`;
@@ -176,6 +190,51 @@ function stopExecutionFromUnknown(
   return execution;
 }
 
+function hasCoherentExecutionStateRelationships(
+  trip: Trip,
+  state: TripExecutionState,
+): boolean {
+  for (const execution of Object.values(state.stopExecutions)) {
+    const hasCompletedAt = execution.completedRecordedAt !== undefined;
+    const hasCompletedDay = execution.completedOnDayId !== undefined;
+
+    if (execution.status === 'completed') {
+      if (!hasCompletedAt || !hasCompletedDay) return false;
+    } else if (hasCompletedAt || hasCompletedDay) {
+      return false;
+    }
+  }
+
+  if (state.executionDayId === undefined) {
+    return (
+      state.executionDayStartedAt === undefined &&
+      state.currentStopId === undefined &&
+      state.currentStepStartedAt === undefined &&
+      state.currentInboundTravel === undefined
+    );
+  }
+
+  if (state.executionDayStartedAt === undefined) return false;
+
+  if (state.currentStopId === undefined) {
+    return (
+      state.currentStepStartedAt === undefined &&
+      state.currentInboundTravel === undefined
+    );
+  }
+
+  const currentExecution = state.stopExecutions[state.currentStopId];
+  return (
+    currentExecution?.status === 'pending' &&
+    currentExecution.scheduledDayId === state.executionDayId &&
+    state.currentStepStartedAt !== undefined &&
+    state.currentInboundTravel !== undefined &&
+    state.currentInboundTravel.toStopId === state.currentStopId &&
+    firstEligiblePendingStopId(trip, state, state.executionDayId) ===
+      state.currentStopId
+  );
+}
+
 function stateFromUnknown(
   value: unknown,
   trip: Trip,
@@ -266,12 +325,14 @@ function stateFromUnknown(
   }
 
   if (!Array.isArray(value.ruleAcknowledgements)) return undefined;
+  const ruleIds = new Set((trip.rules ?? []).map((rule) => rule.id));
   const ruleAcknowledgements: RuleAcknowledgement[] = [];
   for (const rawAcknowledgement of value.ruleAcknowledgements) {
     if (
       !isRecord(rawAcknowledgement) ||
       typeof rawAcknowledgement.ruleId !== 'string' ||
       rawAcknowledgement.ruleId.length === 0 ||
+      !ruleIds.has(rawAcknowledgement.ruleId) ||
       !isIsoTimestamp(rawAcknowledgement.acknowledgedAt)
     ) {
       return undefined;
@@ -304,7 +365,9 @@ function stateFromUnknown(
     state.currentInboundTravel = currentInboundTravel;
   }
 
-  return state;
+  return hasCoherentExecutionStateRelationships(trip, state)
+    ? state
+    : undefined;
 }
 
 function unavailableReason(error: unknown): string {
@@ -476,5 +539,31 @@ export function restoreOrCreateExecutionState(
         ? loadResult.state
         : createInitialTripExecutionState(trip, now),
     loadResult,
+  };
+}
+
+export function persistExecutionTransition(
+  trip: Trip,
+  currentState: TripExecutionState,
+  transition: TransitionResult,
+  storage: ExecutionStorage | undefined = defaultStorage(),
+): PersistExecutionTransitionResult {
+  if (!transition.ok) {
+    return {
+      status: 'rejected',
+      state: currentState,
+      error: transition.error,
+    };
+  }
+
+  return {
+    status: 'accepted',
+    state: transition.state,
+    persistence: saveExecutionState(
+      trip,
+      transition.state,
+      transition.state.lastUpdatedAt,
+      storage,
+    ),
   };
 }

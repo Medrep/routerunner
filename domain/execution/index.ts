@@ -3,6 +3,7 @@ export {
   completeCurrentStop,
   firstEligiblePendingStopId,
   nextEligiblePendingStopId,
+  orderedDayPlan,
   saveCurrentForLater,
   skipCurrentStop,
   startDay,

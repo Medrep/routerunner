@@ -8,23 +8,32 @@ import {
 import {
   completeCurrentStop,
   createInitialTripExecutionState,
+  nextEligiblePendingStopId,
   originalPlannedDayId,
   saveCurrentForLater,
   skipCurrentStop,
   startDay,
+  validateTrip,
 } from '../index.ts';
-import type { TripExecutionState } from '../index.ts';
+import type { DayPlanItem, Trip, TripExecutionState } from '../index.ts';
 
 const dayId = 'copenhagen-day-1';
 const initializedAt = '2026-09-08T08:00:00.000Z';
 const startedAt = '2026-09-08T08:05:00.000Z';
 
-function initialState() {
-  return createInitialTripExecutionState(copenhagenTrip, initializedAt);
+function tripWithPlan(plan: DayPlanItem[]): Trip {
+  return {
+    ...copenhagenTrip,
+    days: [{ ...copenhagenTrip.days[0], plan }],
+  };
 }
 
-function activeState() {
-  const result = startDay(copenhagenTrip, initialState(), dayId, startedAt);
+function initialState(trip: Trip = copenhagenTrip) {
+  return createInitialTripExecutionState(trip, initializedAt);
+}
+
+function activeState(trip: Trip = copenhagenTrip) {
+  const result = startDay(trip, initialState(trip), dayId, startedAt);
   assert.equal(result.ok, true);
   return result.state;
 }
@@ -106,6 +115,101 @@ void test('starts Copenhagen Day 1 at Nyhavn without completing any stop', () =>
     ),
   );
   assert.deepEqual(input, before);
+});
+
+void test('unsorted plan uses numeric order for Start, Done, Skip, and Save for Later', () => {
+  const reversedPlan = [...copenhagenTrip.days[0].plan].reverse();
+  const trip = tripWithPlan(reversedPlan);
+  const physicalOrderBefore = snapshot(trip.days[0].plan);
+  assert.deepEqual(validateTrip(trip), { valid: true, errors: [] });
+
+  const started = startDay(trip, initialState(trip), dayId, startedAt);
+  assert.equal(started.ok, true);
+  assert.equal(started.state.currentStopId, copenhagenStopIds.nyhavn);
+  const startedBefore = snapshot(started.state);
+
+  const transitions = [
+    completeCurrentStop(trip, started.state, startedAt),
+    skipCurrentStop(trip, started.state, startedAt),
+    saveCurrentForLater(trip, started.state, startedAt),
+  ];
+  for (const result of transitions) {
+    assert.equal(result.ok, true);
+    assert.equal(result.state.currentStopId, copenhagenStopIds.amalienborg);
+  }
+
+  assert.deepEqual(started.state, startedBefore);
+  assert.deepEqual(trip.days[0].plan, physicalOrderBefore);
+});
+
+void test('sparse numeric orders execute canonically without requiring contiguous values', () => {
+  const [nyhavn, amalienborg, marbleChurch] = copenhagenTrip.days[0].plan;
+  const sparsePhysicalPlan = [
+    { ...marbleChurch, order: 70 },
+    { ...nyhavn, order: 10 },
+    { ...amalienborg, order: 30 },
+  ];
+  const trip = tripWithPlan(sparsePhysicalPlan);
+  const physicalOrderBefore = snapshot(trip.days[0].plan);
+  assert.deepEqual(validateTrip(trip), { valid: true, errors: [] });
+
+  let state = activeState(trip);
+  assert.equal(state.currentStopId, copenhagenStopIds.nyhavn);
+  let result = completeCurrentStop(trip, state, startedAt);
+  assert.equal(result.ok, true);
+  state = result.state;
+  assert.equal(state.currentStopId, copenhagenStopIds.amalienborg);
+  result = completeCurrentStop(trip, state, startedAt);
+  assert.equal(result.ok, true);
+  assert.equal(result.state.currentStopId, copenhagenStopIds.marbleChurch);
+  assert.deepEqual(trip.days[0].plan, physicalOrderBefore);
+});
+
+void test('ordered advancement and presentation Next skip ineligible entries', () => {
+  const dayOne = {
+    ...copenhagenTrip.days[0],
+    plan: [...copenhagenTrip.days[0].plan].reverse(),
+  };
+  const trip: Trip = {
+    ...copenhagenTrip,
+    endDate: '2026-09-09',
+    days: [dayOne, { id: 'copenhagen-day-2', date: '2026-09-09', plan: [] }],
+  };
+  const physicalOrderBefore = snapshot(dayOne.plan);
+  assert.deepEqual(validateTrip(trip), { valid: true, errors: [] });
+
+  const active = activeState(trip);
+  const state: TripExecutionState = {
+    ...active,
+    stopExecutions: {
+      ...active.stopExecutions,
+      [copenhagenStopIds.amalienborg]: {
+        ...active.stopExecutions[copenhagenStopIds.amalienborg],
+        status: 'completed',
+      },
+      [copenhagenStopIds.marbleChurch]: {
+        ...active.stopExecutions[copenhagenStopIds.marbleChurch],
+        status: 'skipped',
+      },
+      [copenhagenStopIds.kastellet]: {
+        ...active.stopExecutions[copenhagenStopIds.kastellet],
+        scheduledDayId: null,
+      },
+      [copenhagenStopIds.littleMermaid]: {
+        ...active.stopExecutions[copenhagenStopIds.littleMermaid],
+        scheduledDayId: 'copenhagen-day-2',
+      },
+    },
+  };
+
+  assert.equal(
+    nextEligiblePendingStopId(trip, state),
+    copenhagenStopIds.reffen,
+  );
+  const result = completeCurrentStop(trip, state, startedAt);
+  assert.equal(result.ok, true);
+  assert.equal(result.state.currentStopId, copenhagenStopIds.reffen);
+  assert.deepEqual(dayOne.plan, physicalOrderBefore);
 });
 
 void test('rejects unknown, mismatched, completed, and concurrently active day starts', () => {

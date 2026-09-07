@@ -3,8 +3,8 @@
 ## Repository baseline
 
 - Baseline commit: `848e0ac064717d8c05461f32611348fd8215cb25`
-- Implementation commit: the single commit containing this artifact; its full
-  hash is recorded in the RR-MVP-02 closing report.
+- Original RR-MVP-02 implementation commit:
+  `59279a7242ff5fc6d6632dea6cc84bef3e4f8110`
 
 ## Production execution layer
 
@@ -28,8 +28,14 @@ Implemented transitions:
 Ordinary invalid transitions return a typed discriminated result:
 `{ ok: true, state } | { ok: false, error: { code, message } }`. Inputs and
 nested execution records are not mutated. Advancement uses the first eligible
-pending Stop in the active immutable day plan; it does not promote Do Now work,
-cross days, or infer completion.
+pending Stop in the active immutable day plan according to ascending numeric
+`DayPlanItem.order`; it does not promote Do Now work, cross days, or infer
+completion.
+
+The production execution layer derives a sorted copy of `TripDay.plan` for
+Start, shared advancement, and presentation Next. Raw `TripDay.plan` array
+position is not authoritative, sparse order values are supported, and the
+canonical source array is never mutated.
 
 ## Production page integration
 
@@ -48,7 +54,7 @@ RR-02A-AUD-001 status: **RESOLVED**.
 
 ## Tests and verification
 
-Added `domain/__tests__/execution-transitions.test.ts` with 11 focused test
+Added `domain/__tests__/execution-transitions.test.ts` with 14 focused test
 cases covering:
 
 - initialization, post-day exclusion, null scheduling, and fixture immutability;
@@ -63,18 +69,23 @@ cases covering:
   advancement, final-Current clearing, and no inferred completion;
 - preservation of `doNowQueue`, `completedDayIds`, and
   `ruleAcknowledgements`.
+- physically unsorted valid plans for Start, Done, Skip, Save for Later, and
+  presentation Next;
+- sparse numeric plan order and ordered advancement across completed, skipped,
+  For-Later, and another-day entries without source-plan mutation.
+
+RR-MVP-02-AUD-001 was corrected after independent review: production execution
+and presentation sequence now consistently use numeric `DayPlanItem.order`.
 
 Verification results before commit:
 
-- `npm test`: PASS — 64 tests, 64 passed.
+- `npm test`: PASS — 67 tests, 67 passed.
 - `npm run typecheck`: PASS.
 - `npm run build`: PASS — output includes `/` and `/design-board`.
-- focused Oxlint on the new domain and test files: PASS.
-- focused Oxlint on all changed code: FAIL only on three accepted pre-existing
-  findings retained from the baseline: one `next(no-img-element)` finding in
-  the production page and two `jsx-a11y(prefer-tag-over-role)` findings in the
-  shared map. The same constructs are present in both baseline files. No
-  RR-MVP-02 lint finding was added.
+- focused Oxlint on correction-touched code: FAIL only on the accepted
+  pre-existing `next(no-img-element)` finding retained in the production page.
+  The correction did not touch the shared map containing the other two
+  documented focused findings. No RR-MVP-02 correction lint finding was added.
 - `npx oxfmt --check` on all changed code/test files: PASS.
 - full `npm run lint`: FAIL — the accepted 22 diagnostics remain across
   legacy/shared files; RR-MVP-02 adds none.

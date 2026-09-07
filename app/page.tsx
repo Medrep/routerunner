@@ -40,6 +40,7 @@ import {
   completeCurrentStop,
   createInitialTripExecutionState,
   nextEligiblePendingStopId,
+  orderedDayPlan,
   saveCurrentForLater as saveCurrentForLaterTransition,
   skipCurrentStop,
   startDay,
@@ -53,6 +54,7 @@ import {
 type PresentationStatus = NonNullable<RouteMapState['statuses']>[number];
 
 const day = copenhagenTrip.days[0];
+const orderedPlan = orderedDayPlan(day);
 const mapPositions = [
   { x: 215, y: 374 },
   { x: 232, y: 285 },
@@ -100,14 +102,14 @@ export default function Page() {
       )
     : -1;
   const current = currentIndex >= 0 ? copenhagenTrip.stops[currentIndex] : null;
-  const firstPreparedStopId = day.plan[0]?.stopId;
+  const firstPreparedStopId = orderedPlan[0]?.stopId;
   const firstPreparedStop = copenhagenTrip.stops.find(
     (stop) => stop.id === firstPreparedStopId,
   );
   const displayedStop = current ?? (!started ? firstPreparedStop : undefined);
   const nextStopId = started
     ? nextEligiblePendingStopId(copenhagenTrip, execution)
-    : day.plan[1]?.stopId;
+    : orderedPlan[1]?.stopId;
   const nextIndex = nextStopId
     ? copenhagenTrip.stops.findIndex((stop) => stop.id === nextStopId)
     : -1;
@@ -424,7 +426,7 @@ export default function Page() {
                 </span>
               </div>
               <ol>
-                {day.plan.map((item, planIndex) => {
+                {orderedPlan.map((item, planIndex) => {
                   const stop = copenhagenTrip.stops.find(
                     (candidate) => candidate.id === item.stopId,
                   )!;
@@ -432,7 +434,7 @@ export default function Page() {
                     (candidate) => candidate.id === stop.id,
                   );
                   const status = presentationStatus(stop.id);
-                  const previousItem = day.plan[planIndex - 1];
+                  const previousItem = orderedPlan[planIndex - 1];
                   const previousStop = previousItem
                     ? copenhagenTrip.stops.find(
                         (candidate) => candidate.id === previousItem.stopId,

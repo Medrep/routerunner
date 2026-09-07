@@ -1,4 +1,4 @@
-import type { StopId, Trip, TripDay } from '../trip/types.ts';
+import type { DayPlanItem, StopId, Trip, TripDay } from '../trip/types.ts';
 import type { StopExecution, TripExecutionState } from './types.ts';
 
 export type TransitionErrorCode =
@@ -46,10 +46,12 @@ function tripMatchesState(
   }
 }
 
-/**
- * Returns the first pending stop that remains scheduled in the given static
- * day plan. The plan array is the immutable ordering authority.
- */
+/** Returns a canonical plan view without mutating the TripDay source array. */
+export function orderedDayPlan(day: Pick<TripDay, 'plan'>): DayPlanItem[] {
+  return [...day.plan].sort((left, right) => left.order - right.order);
+}
+
+/** Returns the first pending stop in canonical numeric plan order. */
 export function firstEligiblePendingStopId(
   trip: Pick<Trip, 'days'>,
   state: Pick<TripExecutionState, 'stopExecutions'>,
@@ -57,12 +59,15 @@ export function firstEligiblePendingStopId(
 ): StopId | undefined {
   const day = trip.days.find((candidate) => candidate.id === dayId);
 
-  return day?.plan.find((item) => {
-    const execution = state.stopExecutions[item.stopId];
-    return (
-      execution?.status === 'pending' && execution.scheduledDayId === dayId
-    );
-  })?.stopId;
+  return (
+    day &&
+    orderedDayPlan(day).find((item) => {
+      const execution = state.stopExecutions[item.stopId];
+      return (
+        execution?.status === 'pending' && execution.scheduledDayId === dayId
+      );
+    })?.stopId
+  );
 }
 
 /** Derives presentation Next without introducing a second state authority. */
@@ -80,12 +85,13 @@ export function nextEligiblePendingStopId(
   );
   if (!day) return undefined;
 
-  const currentIndex = day.plan.findIndex(
+  const orderedPlan = orderedDayPlan(day);
+  const currentIndex = orderedPlan.findIndex(
     (item) => item.stopId === state.currentStopId,
   );
   if (currentIndex < 0) return undefined;
 
-  return day.plan.slice(currentIndex + 1).find((item) => {
+  return orderedPlan.slice(currentIndex + 1).find((item) => {
     const execution = state.stopExecutions[item.stopId];
     return (
       execution?.status === 'pending' &&

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -38,10 +38,11 @@ import {
 import { copenhagenStopIds, copenhagenTrip } from '@/data/trips/copenhagen';
 import {
   completeCurrentStop,
-  createInitialTripExecutionState,
   nextEligiblePendingStopId,
   orderedDayPlan,
+  restoreOrCreateExecutionState,
   saveCurrentForLater as saveCurrentForLaterTransition,
+  saveExecutionState,
   skipCurrentStop,
   startDay,
   type Stop,
@@ -87,13 +88,46 @@ function priorityLabel(stop: Stop) {
   return 'Part of your route';
 }
 
+const subscribeToHydration = () => () => {};
+const clientHydratedSnapshot = () => true;
+const serverHydratedSnapshot = () => false;
+
 export default function Page() {
-  const [execution, setExecution] = useState<TripExecutionState>(() =>
-    createInitialTripExecutionState(copenhagenTrip, new Date().toISOString()),
+  const hydrated = useSyncExternalStore(
+    subscribeToHydration,
+    clientHydratedSnapshot,
+    serverHydratedSnapshot,
+  );
+
+  if (!hydrated) {
+    return (
+      <main className="prototype" aria-busy="true">
+        <div className="prototype-bar">
+          <span>
+            PRODUCTION EXECUTION <b>RESTORING</b>
+          </span>
+          <span>Loading local progress</span>
+        </div>
+      </main>
+    );
+  }
+
+  return <ExecutionPage />;
+}
+
+function ExecutionPage() {
+  const [execution, setExecution] = useState<TripExecutionState>(
+    () =>
+      restoreOrCreateExecutionState(copenhagenTrip, new Date().toISOString())
+        .state,
   );
   const [full, setFull] = useState(false);
   const [detail, setDetail] = useState<number | null>(null);
   const [feedback, setFeedback] = useState('');
+
+  useEffect(() => {
+    saveExecutionState(copenhagenTrip, execution, execution.lastUpdatedAt);
+  }, [execution]);
 
   const started = execution.executionDayId !== undefined;
   const currentIndex = execution.currentStopId
@@ -242,7 +276,7 @@ export default function Page() {
       <main className="prototype">
         <div className="prototype-bar">
           <span>
-            PRODUCTION EXECUTION <b>IN MEMORY</b>
+            PRODUCTION EXECUTION <b>LOCAL</b>
           </span>
           <span>Schedule projection unavailable</span>
         </div>
@@ -513,8 +547,8 @@ export default function Page() {
           <span className="footer-brand">RouteRunner</span>
           <p>Your AI plans. RouteRunner executes.</p>
           <small>
-            In-memory execution · schedule projection, live routing and GPS are
-            not available yet.
+            Local browser execution · schedule projection, live routing and GPS
+            are not available yet.
           </small>
         </footer>
       </main>

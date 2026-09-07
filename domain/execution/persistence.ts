@@ -1,0 +1,480 @@
+import type { StopId, Trip } from '../trip/types.ts';
+import type {
+  CurrentInboundTravel,
+  DoNowQueueEntry,
+  KnownOrUnknownDuration,
+  RuleAcknowledgement,
+  StopExecution,
+  StopExecutionStatus,
+  TripExecutionState,
+} from './types.ts';
+import { createInitialTripExecutionState } from './create-execution-state.ts';
+
+export const EXECUTION_STATE_SCHEMA_VERSION = 1;
+
+export interface ExecutionStateEnvelope {
+  version: typeof EXECUTION_STATE_SCHEMA_VERSION;
+  tripId: string;
+  savedAt: string;
+  state: TripExecutionState;
+}
+
+export type ExecutionStorage = Pick<
+  Storage,
+  'getItem' | 'setItem' | 'removeItem'
+>;
+
+export type DeserializeExecutionStateResult =
+  | { status: 'restored'; state: TripExecutionState; savedAt: string }
+  | { status: 'invalid'; reason: string };
+
+export type LoadExecutionStateResult =
+  | DeserializeExecutionStateResult
+  | { status: 'empty' }
+  | { status: 'unavailable'; operation: 'read'; reason: string };
+
+export type SaveExecutionStateResult =
+  | { status: 'saved'; savedAt: string }
+  | { status: 'invalid'; reason: string }
+  | { status: 'unavailable'; operation: 'write'; reason: string };
+
+export type ClearExecutionStateResult =
+  | { status: 'cleared' }
+  | { status: 'unavailable'; operation: 'clear'; reason: string };
+
+export interface RestoredOrFreshExecutionState {
+  state: TripExecutionState;
+  loadResult: LoadExecutionStateResult;
+}
+
+export function executionStorageKey(tripId: string): string {
+  return `routerunner:execution:${tripId}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString() === value;
+}
+
+function optionalValue(record: Record<string, unknown>, key: string): unknown {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
+function canonicalDayId(
+  value: unknown,
+  dayIds: ReadonlySet<string>,
+): string | undefined {
+  return typeof value === 'string' && dayIds.has(value) ? value : undefined;
+}
+
+function durationFromUnknown(
+  value: unknown,
+): KnownOrUnknownDuration | undefined {
+  if (!isRecord(value)) return undefined;
+
+  if (
+    value.status === 'known' &&
+    typeof value.minutes === 'number' &&
+    Number.isFinite(value.minutes) &&
+    value.minutes >= 0
+  ) {
+    return { status: 'known', minutes: value.minutes };
+  }
+
+  if (value.status !== 'unknown') return undefined;
+
+  const reason = optionalValue(value, 'reason');
+  if (
+    reason !== undefined &&
+    reason !== 'unresolved' &&
+    reason !== 'unavailable'
+  ) {
+    return undefined;
+  }
+
+  return reason === undefined
+    ? { status: 'unknown' }
+    : { status: 'unknown', reason };
+}
+
+function inboundTravelFromUnknown(
+  value: unknown,
+  stopIds: ReadonlyMap<string, StopId>,
+): CurrentInboundTravel | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const fromStopId =
+    value.fromStopId === null
+      ? null
+      : typeof value.fromStopId === 'string'
+        ? stopIds.get(value.fromStopId)
+        : undefined;
+  const toStopId =
+    typeof value.toStopId === 'string'
+      ? stopIds.get(value.toStopId)
+      : undefined;
+  const duration = durationFromUnknown(value.duration);
+
+  if (fromStopId === undefined || !toStopId || !duration) return undefined;
+
+  return { fromStopId, toStopId, duration };
+}
+
+function stopExecutionFromUnknown(
+  value: unknown,
+  expectedStopId: StopId,
+  dayIds: ReadonlySet<string>,
+): StopExecution | undefined {
+  if (!isRecord(value) || value.stopId !== expectedStopId) return undefined;
+
+  const status = value.status;
+  if (status !== 'pending' && status !== 'completed' && status !== 'skipped') {
+    return undefined;
+  }
+
+  const rawScheduledDayId = value.scheduledDayId;
+  const scheduledDayId =
+    rawScheduledDayId === null
+      ? null
+      : canonicalDayId(rawScheduledDayId, dayIds);
+  if (scheduledDayId === undefined) return undefined;
+
+  const completedRecordedAt = optionalValue(value, 'completedRecordedAt');
+  if (
+    completedRecordedAt !== undefined &&
+    !isIsoTimestamp(completedRecordedAt)
+  ) {
+    return undefined;
+  }
+
+  const rawCompletedOnDayId = optionalValue(value, 'completedOnDayId');
+  const completedOnDayId =
+    rawCompletedOnDayId === undefined
+      ? undefined
+      : canonicalDayId(rawCompletedOnDayId, dayIds);
+  if (rawCompletedOnDayId !== undefined && completedOnDayId === undefined) {
+    return undefined;
+  }
+
+  const execution: StopExecution = {
+    stopId: expectedStopId,
+    status: status as StopExecutionStatus,
+    scheduledDayId,
+  };
+  if (completedRecordedAt !== undefined) {
+    execution.completedRecordedAt = completedRecordedAt;
+  }
+  if (completedOnDayId !== undefined) {
+    execution.completedOnDayId = completedOnDayId;
+  }
+  return execution;
+}
+
+function stateFromUnknown(
+  value: unknown,
+  trip: Trip,
+): TripExecutionState | undefined {
+  if (!isRecord(value) || value.tripId !== trip.id) return undefined;
+
+  const stopIds = new Map(trip.stops.map((stop) => [String(stop.id), stop.id]));
+  const dayIds = new Set(trip.days.map((day) => day.id));
+
+  if (!isRecord(value.stopExecutions)) return undefined;
+  const executionKeys = Object.keys(value.stopExecutions);
+  if (
+    executionKeys.length !== stopIds.size ||
+    executionKeys.some((stopId) => !stopIds.has(stopId))
+  ) {
+    return undefined;
+  }
+
+  const stopExecutions = {} as Record<StopId, StopExecution>;
+  for (const [rawStopId, stopId] of stopIds) {
+    const execution = stopExecutionFromUnknown(
+      value.stopExecutions[rawStopId],
+      stopId,
+      dayIds,
+    );
+    if (!execution) return undefined;
+    stopExecutions[stopId] = execution;
+  }
+
+  const rawExecutionDayId = optionalValue(value, 'executionDayId');
+  const executionDayId =
+    rawExecutionDayId === undefined
+      ? undefined
+      : canonicalDayId(rawExecutionDayId, dayIds);
+  if (rawExecutionDayId !== undefined && executionDayId === undefined) {
+    return undefined;
+  }
+
+  const rawCurrentStopId = optionalValue(value, 'currentStopId');
+  const currentStopId =
+    rawCurrentStopId === undefined || typeof rawCurrentStopId !== 'string'
+      ? undefined
+      : stopIds.get(rawCurrentStopId);
+  if (rawCurrentStopId !== undefined && currentStopId === undefined) {
+    return undefined;
+  }
+
+  const executionDayStartedAt = optionalValue(value, 'executionDayStartedAt');
+  const currentStepStartedAt = optionalValue(value, 'currentStepStartedAt');
+  if (
+    (executionDayStartedAt !== undefined &&
+      !isIsoTimestamp(executionDayStartedAt)) ||
+    (currentStepStartedAt !== undefined &&
+      !isIsoTimestamp(currentStepStartedAt))
+  ) {
+    return undefined;
+  }
+
+  const rawInboundTravel = optionalValue(value, 'currentInboundTravel');
+  const currentInboundTravel =
+    rawInboundTravel === undefined
+      ? undefined
+      : inboundTravelFromUnknown(rawInboundTravel, stopIds);
+  if (rawInboundTravel !== undefined && currentInboundTravel === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value.doNowQueue)) return undefined;
+  const doNowQueue: DoNowQueueEntry[] = [];
+  for (const rawEntry of value.doNowQueue) {
+    if (!isRecord(rawEntry) || typeof rawEntry.stopId !== 'string') {
+      return undefined;
+    }
+    const stopId = stopIds.get(rawEntry.stopId);
+    const rawReturnDayId = rawEntry.returnScheduledDayId;
+    const returnScheduledDayId =
+      rawReturnDayId === null ? null : canonicalDayId(rawReturnDayId, dayIds);
+    if (!stopId || returnScheduledDayId === undefined) return undefined;
+    doNowQueue.push({ stopId, returnScheduledDayId });
+  }
+
+  if (!Array.isArray(value.completedDayIds)) return undefined;
+  const completedDayIds: string[] = [];
+  for (const rawDayId of value.completedDayIds) {
+    const dayId = canonicalDayId(rawDayId, dayIds);
+    if (!dayId || completedDayIds.includes(dayId)) return undefined;
+    completedDayIds.push(dayId);
+  }
+
+  if (!Array.isArray(value.ruleAcknowledgements)) return undefined;
+  const ruleAcknowledgements: RuleAcknowledgement[] = [];
+  for (const rawAcknowledgement of value.ruleAcknowledgements) {
+    if (
+      !isRecord(rawAcknowledgement) ||
+      typeof rawAcknowledgement.ruleId !== 'string' ||
+      rawAcknowledgement.ruleId.length === 0 ||
+      !isIsoTimestamp(rawAcknowledgement.acknowledgedAt)
+    ) {
+      return undefined;
+    }
+    ruleAcknowledgements.push({
+      ruleId: rawAcknowledgement.ruleId,
+      acknowledgedAt: rawAcknowledgement.acknowledgedAt,
+    });
+  }
+
+  if (!isIsoTimestamp(value.lastUpdatedAt)) return undefined;
+
+  const state: TripExecutionState = {
+    tripId: trip.id,
+    stopExecutions,
+    doNowQueue,
+    completedDayIds,
+    ruleAcknowledgements,
+    lastUpdatedAt: value.lastUpdatedAt,
+  };
+  if (executionDayId !== undefined) state.executionDayId = executionDayId;
+  if (executionDayStartedAt !== undefined) {
+    state.executionDayStartedAt = executionDayStartedAt;
+  }
+  if (currentStopId !== undefined) state.currentStopId = currentStopId;
+  if (currentStepStartedAt !== undefined) {
+    state.currentStepStartedAt = currentStepStartedAt;
+  }
+  if (currentInboundTravel !== undefined) {
+    state.currentInboundTravel = currentInboundTravel;
+  }
+
+  return state;
+}
+
+function unavailableReason(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : 'Browser storage is unavailable.';
+}
+
+function defaultStorage(): ExecutionStorage | undefined {
+  if (typeof window === 'undefined') return undefined;
+
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+export function deserializeExecutionState(
+  serialized: string,
+  trip: Trip,
+): DeserializeExecutionStateResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized);
+  } catch {
+    return {
+      status: 'invalid',
+      reason: 'Persisted execution JSON is malformed.',
+    };
+  }
+
+  if (!isRecord(parsed)) {
+    return {
+      status: 'invalid',
+      reason: 'Persisted execution envelope is invalid.',
+    };
+  }
+  if (parsed.version !== EXECUTION_STATE_SCHEMA_VERSION) {
+    return {
+      status: 'invalid',
+      reason: 'Persisted execution version is unsupported.',
+    };
+  }
+  if (parsed.tripId !== trip.id) {
+    return {
+      status: 'invalid',
+      reason: 'Persisted execution trip does not match.',
+    };
+  }
+  if (!isIsoTimestamp(parsed.savedAt)) {
+    return {
+      status: 'invalid',
+      reason: 'Persisted execution savedAt is invalid.',
+    };
+  }
+
+  const state = stateFromUnknown(parsed.state, trip);
+  if (!state) {
+    return {
+      status: 'invalid',
+      reason: 'Persisted execution state is invalid.',
+    };
+  }
+
+  return { status: 'restored', state, savedAt: parsed.savedAt };
+}
+
+export function loadExecutionState(
+  trip: Trip,
+  storage: ExecutionStorage | undefined = defaultStorage(),
+): LoadExecutionStateResult {
+  if (!storage) {
+    return {
+      status: 'unavailable',
+      operation: 'read',
+      reason: 'Browser storage is unavailable.',
+    };
+  }
+
+  let serialized: string | null;
+  try {
+    serialized = storage.getItem(executionStorageKey(trip.id));
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      operation: 'read',
+      reason: unavailableReason(error),
+    };
+  }
+
+  return serialized === null
+    ? { status: 'empty' }
+    : deserializeExecutionState(serialized, trip);
+}
+
+export function saveExecutionState(
+  trip: Trip,
+  state: TripExecutionState,
+  savedAt: string,
+  storage: ExecutionStorage | undefined = defaultStorage(),
+): SaveExecutionStateResult {
+  if (state.tripId !== trip.id || !isIsoTimestamp(savedAt)) {
+    return {
+      status: 'invalid',
+      reason: 'Execution state cannot be persisted.',
+    };
+  }
+  if (!storage) {
+    return {
+      status: 'unavailable',
+      operation: 'write',
+      reason: 'Browser storage is unavailable.',
+    };
+  }
+
+  const envelope: ExecutionStateEnvelope = {
+    version: EXECUTION_STATE_SCHEMA_VERSION,
+    tripId: trip.id,
+    savedAt,
+    state,
+  };
+
+  try {
+    storage.setItem(executionStorageKey(trip.id), JSON.stringify(envelope));
+    return { status: 'saved', savedAt };
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      operation: 'write',
+      reason: unavailableReason(error),
+    };
+  }
+}
+
+export function clearExecutionState(
+  trip: Pick<Trip, 'id'>,
+  storage: ExecutionStorage | undefined = defaultStorage(),
+): ClearExecutionStateResult {
+  if (!storage) {
+    return {
+      status: 'unavailable',
+      operation: 'clear',
+      reason: 'Browser storage is unavailable.',
+    };
+  }
+
+  try {
+    storage.removeItem(executionStorageKey(trip.id));
+    return { status: 'cleared' };
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      operation: 'clear',
+      reason: unavailableReason(error),
+    };
+  }
+}
+
+export function restoreOrCreateExecutionState(
+  trip: Trip,
+  now: string,
+  storage: ExecutionStorage | undefined = defaultStorage(),
+): RestoredOrFreshExecutionState {
+  const loadResult = loadExecutionState(trip, storage);
+  return {
+    state:
+      loadResult.status === 'restored'
+        ? loadResult.state
+        : createInitialTripExecutionState(trip, now),
+    loadResult,
+  };
+}

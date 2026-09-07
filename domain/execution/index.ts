@@ -1,5 +1,14 @@
 export { createInitialTripExecutionState } from './create-execution-state.ts';
 export {
+  clearExecutionState,
+  deserializeExecutionState,
+  EXECUTION_STATE_SCHEMA_VERSION,
+  executionStorageKey,
+  loadExecutionState,
+  restoreOrCreateExecutionState,
+  saveExecutionState,
+} from './persistence.ts';
+export {
   completeCurrentStop,
   firstEligiblePendingStopId,
   nextEligiblePendingStopId,
@@ -22,3 +31,12 @@ export type {
   StopExecutionStatus,
   TripExecutionState,
 } from './types.ts';
+export type {
+  ClearExecutionStateResult,
+  DeserializeExecutionStateResult,
+  ExecutionStateEnvelope,
+  ExecutionStorage,
+  LoadExecutionStateResult,
+  RestoredOrFreshExecutionState,
+  SaveExecutionStateResult,
+} from './persistence.ts';

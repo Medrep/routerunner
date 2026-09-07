@@ -55,6 +55,10 @@ class FakeGeolocation implements GeolocationAdapter {
   cleared: number[] = [];
   success?: PositionCallback;
   failure?: PositionErrorCallback | null;
+  callbacks = new Map<
+    number,
+    { success: PositionCallback; failure?: PositionErrorCallback | null }
+  >();
 
   watchPosition(
     successCallback: PositionCallback,
@@ -63,6 +67,10 @@ class FakeGeolocation implements GeolocationAdapter {
     this.watchCalls += 1;
     this.success = successCallback;
     this.failure = errorCallback;
+    this.callbacks.set(this.watchCalls, {
+      success: successCallback,
+      failure: errorCallback,
+    });
     return this.watchCalls;
   }
 
@@ -75,8 +83,9 @@ class FakeGeolocation implements GeolocationAdapter {
     longitude: number,
     accuracy: number,
     timestamp: number,
+    watchId = this.watchCalls,
   ) {
-    this.success?.({
+    this.callbacks.get(watchId)?.success({
       coords: {
         latitude,
         longitude,
@@ -89,6 +98,16 @@ class FakeGeolocation implements GeolocationAdapter {
       },
       timestamp,
       toJSON: () => ({}),
+    });
+  }
+
+  sendError(code: number, message: string, watchId = this.watchCalls): void {
+    this.callbacks.get(watchId)?.failure?.({
+      code,
+      message,
+      PERMISSION_DENIED: 1,
+      POSITION_UNAVAILABLE: 2,
+      TIMEOUT: 3,
     });
   }
 }
@@ -198,6 +217,103 @@ void test('deactivation and disposal clear active location watches', () => {
   controller.setActive(true);
   controller.dispose();
   assert.deepEqual(geolocation.cleared, [1, 2]);
+});
+
+void test('stale error cannot alter state or clear a replacement watch', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, visibility } =
+    collectLocationController(geolocation);
+  controller.setActive(true);
+  visibility.setVisible(false);
+  visibility.setVisible(true);
+  geolocation.sendPosition(55.6841, 12.593, 6, Date.parse(startedAt), 2);
+  const stateCount = states.length;
+
+  geolocation.sendError(2, 'stale position unavailable', 1);
+
+  assert.equal(states.length, stateCount);
+  assert.deepEqual(states.at(-1), {
+    status: 'available',
+    coordinates: {
+      latitude: 55.6841,
+      longitude: 12.593,
+      accuracy: 6,
+      observedAt: startedAt,
+    },
+  });
+  assert.deepEqual(geolocation.cleared, [1]);
+  controller.dispose();
+  assert.deepEqual(geolocation.cleared, [1, 2]);
+});
+
+void test('stale success cannot overwrite a newer watch position', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, visibility } =
+    collectLocationController(geolocation);
+  controller.setActive(true);
+  visibility.setVisible(false);
+  visibility.setVisible(true);
+  geolocation.sendPosition(55.6841, 12.593, 5, Date.parse(startedAt), 2);
+  const authoritative = states.at(-1);
+  const stateCount = states.length;
+
+  geolocation.sendPosition(55.6797, 12.5909, 20, Date.parse(initializedAt), 1);
+
+  assert.equal(states.length, stateCount);
+  assert.deepEqual(states.at(-1), authoritative);
+  controller.dispose();
+});
+
+void test('success retained after disposal is inert', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states } = collectLocationController(geolocation);
+  controller.setActive(true);
+  controller.dispose();
+  const stateCount = states.length;
+
+  geolocation.sendPosition(55.6841, 12.593, 5, Date.parse(startedAt), 1);
+
+  assert.equal(states.length, stateCount);
+  assert.equal(
+    states.some((state) => state.status === 'available'),
+    false,
+  );
+  assert.deepEqual(geolocation.cleared, [1]);
+});
+
+void test('error retained after disposal is inert', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states } = collectLocationController(geolocation);
+  controller.setActive(true);
+  controller.dispose();
+  const stateCount = states.length;
+
+  geolocation.sendError(1, 'stale permission denial', 1);
+
+  assert.equal(states.length, stateCount);
+  assert.equal(
+    states.some((state) => state.status === 'denied'),
+    false,
+  );
+  assert.deepEqual(geolocation.cleared, [1]);
+});
+
+void test('callbacks retained after page-hidden invalidation are inert', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, visibility } =
+    collectLocationController(geolocation);
+  controller.setActive(true);
+  visibility.setVisible(false);
+  const hiddenState = states.at(-1);
+  const stateCount = states.length;
+
+  geolocation.sendPosition(55.6841, 12.593, 5, Date.parse(startedAt), 1);
+  geolocation.sendError(2, 'stale hidden error', 1);
+
+  assert.equal(states.length, stateCount);
+  assert.deepEqual(states.at(-1), hiddenState);
+  assert.deepEqual(geolocation.cleared, [1]);
+  controller.dispose();
 });
 
 void test('GPS updates remain separate from execution and use a distinct map field', () => {

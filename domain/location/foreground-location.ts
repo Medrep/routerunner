@@ -55,6 +55,7 @@ export function mapGeolocationError(
 export class ForegroundLocationController {
   private active = false;
   private disposed = false;
+  private generation = 0;
   private watchId: number | undefined;
   private readonly geolocation: GeolocationAdapter | undefined;
   private readonly visibility: VisibilityAdapter;
@@ -105,9 +106,11 @@ export class ForegroundLocationController {
     }
 
     this.onState({ status: 'locating' });
+    const generation = ++this.generation;
     try {
-      this.watchId = this.geolocation.watchPosition(
+      const watchId = this.geolocation.watchPosition(
         (position) => {
+          if (!this.isCurrentGeneration(generation)) return;
           this.onState({
             status: 'available',
             coordinates: {
@@ -121,6 +124,7 @@ export class ForegroundLocationController {
           });
         },
         (error) => {
+          if (!this.isCurrentGeneration(generation)) return;
           this.stopWatch();
           this.onState(mapGeolocationError(error));
         },
@@ -130,7 +134,14 @@ export class ForegroundLocationController {
           timeout: 20_000,
         },
       );
+      if (!this.isCurrentGeneration(generation)) {
+        this.geolocation.clearWatch(watchId);
+        return;
+      }
+      this.watchId = watchId;
     } catch (error) {
+      if (!this.isCurrentGeneration(generation)) return;
+      this.generation += 1;
       this.watchId = undefined;
       this.onState({
         status: 'error',
@@ -142,9 +153,21 @@ export class ForegroundLocationController {
     }
   }
 
+  private isCurrentGeneration(generation: number): boolean {
+    return (
+      generation === this.generation &&
+      !this.disposed &&
+      this.active &&
+      this.visibility.isVisible()
+    );
+  }
+
   private stopWatch(): void {
-    if (this.watchId === undefined || !this.geolocation) return;
-    this.geolocation.clearWatch(this.watchId);
+    this.generation += 1;
+    const watchId = this.watchId;
     this.watchId = undefined;
+    if (watchId !== undefined && this.geolocation) {
+      this.geolocation.clearWatch(watchId);
+    }
   }
 }

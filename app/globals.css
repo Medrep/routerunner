@@ -880,6 +880,56 @@ body {
   font-size: 14px;
   line-height: 1.45;
 }
+.visit-plan-summary {
+  margin-top: 12px;
+  color: #53675b;
+  font-size: 14px;
+  font-weight: 650;
+}
+.stop-visit-plan {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid #dbe3dc;
+}
+.stop-visit-plan > h3 {
+  color: #53675b;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.stop-visit-plan > ol {
+  display: grid;
+  gap: 17px;
+  margin-top: 14px;
+  padding-left: 27px;
+  color: #176b50;
+  font-variant-numeric: tabular-nums;
+}
+.stop-visit-plan > ol > li {
+  padding-left: 5px;
+}
+.stop-visit-plan h4 {
+  color: #263e32;
+  font-size: 16px;
+  line-height: 1.35;
+}
+.stop-visit-plan li p {
+  margin-top: 5px;
+  color: #4d6255;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.stop-visit-plan li ul {
+  display: grid;
+  gap: 3px;
+  margin-top: 7px;
+  padding-left: 18px;
+  color: #5b6c61;
+  font-size: 13px;
+  line-height: 1.4;
+  list-style: disc;
+}
 .next-step {
   margin-top: 24px;
   padding-top: 21px;

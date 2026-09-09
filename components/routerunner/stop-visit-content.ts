@@ -1,4 +1,8 @@
-import type { Stop } from '../../domain/index.ts';
+import {
+  orderedStopVisitPlanItems,
+  type Stop,
+  type StopVisitPlanItem,
+} from '../../domain/index.ts';
 
 export type StopVisitContentSurface = 'current' | 'details';
 
@@ -6,6 +10,8 @@ export interface StopVisitContentModel {
   surface: StopVisitContentSurface;
   visitBrief?: string;
   highlights?: readonly string[];
+  visitPlanItemCount?: number;
+  visitPlanItems?: readonly StopVisitPlanItem[];
 }
 
 /**
@@ -20,11 +26,26 @@ export function stopVisitContentModel(
     stop.highlights !== undefined && stop.highlights.length > 0
       ? stop.highlights
       : undefined;
-  if (stop.visitBrief === undefined && highlights === undefined) return null;
+  const visitPlanItems =
+    stop.visitPlan === undefined
+      ? undefined
+      : orderedStopVisitPlanItems(stop.visitPlan);
+  if (
+    stop.visitBrief === undefined &&
+    highlights === undefined &&
+    visitPlanItems === undefined
+  )
+    return null;
 
   return {
     surface,
     visitBrief: stop.visitBrief,
     highlights,
+    ...(surface === 'current' && visitPlanItems !== undefined
+      ? { visitPlanItemCount: visitPlanItems.length }
+      : {}),
+    ...(surface === 'details' && visitPlanItems !== undefined
+      ? { visitPlanItems }
+      : {}),
   };
 }

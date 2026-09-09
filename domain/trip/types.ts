@@ -1,8 +1,14 @@
 declare const stopIdBrand: unique symbol;
+declare const stopVisitPlanItemIdBrand: unique symbol;
 declare const postDayDestinationIdBrand: unique symbol;
 
 /** Opaque sightseeing-stop identity within a trip. */
 export type StopId = string & { readonly [stopIdBrand]: 'StopId' };
+
+/** Opaque identity scoped to one Stop's prepared internal visit plan. */
+export type StopVisitPlanItemId = string & {
+  readonly [stopVisitPlanItemIdBrand]: 'StopVisitPlanItemId';
+};
 
 /** Opaque identity for static post-day navigation data. */
 export type PostDayDestinationId = string & {
@@ -14,6 +20,11 @@ export function createStopId(value: string): StopId {
   return value as StopId;
 }
 
+/** Explicit raw-data boundary for a parent-scoped internal plan identity. */
+export function createStopVisitPlanItemId(value: string): StopVisitPlanItemId {
+  return value as StopVisitPlanItemId;
+}
+
 /** Explicit raw-data boundary; fixture validation belongs to RR-MVP-01. */
 export function createPostDayDestinationId(
   value: string,
@@ -22,6 +33,20 @@ export function createPostDayDestinationId(
 }
 
 export type StopPriority = 'must' | 'normal' | 'optional';
+
+/** Immutable prepared content for one ordered place or task inside a Stop. */
+export interface StopVisitPlanItem {
+  readonly id: StopVisitPlanItemId;
+  readonly order: number;
+  readonly name: string;
+  readonly visitBrief?: string;
+  readonly highlights?: readonly string[];
+}
+
+/** Static internal execution structure; it is not global Trip execution state. */
+export interface StopVisitPlan {
+  readonly items: readonly StopVisitPlanItem[];
+}
 
 export type TimeConstraint =
   | {
@@ -43,6 +68,8 @@ export interface Stop {
   visitBrief?: string;
   /** Prepared, ordered things to notice, check, or do at the stop. */
   highlights?: readonly string[];
+  /** Prepared ordered places or tasks inside this one global Stop. */
+  visitPlan?: StopVisitPlan;
   latitude: number;
   longitude: number;
   priority: StopPriority;

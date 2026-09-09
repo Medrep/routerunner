@@ -16,6 +16,10 @@ export type TripValidationCode =
   | 'INVALID_TIME'
   | 'INVALID_TIME_ZONE'
   | 'INVALID_NUMBER'
+  | 'EMPTY_VISIT_PLAN'
+  | 'DUPLICATE_VISIT_PLAN_ITEM_ID'
+  | 'DUPLICATE_VISIT_PLAN_ITEM_ORDER'
+  | 'INVALID_VISIT_PLAN_ITEM_NAME'
   | 'INVALID_VISIT_BRIEF'
   | 'INVALID_HIGHLIGHT'
   | 'TOO_MANY_HIGHLIGHTS'
@@ -86,6 +90,44 @@ export function validateTrip(trip: Trip): TripValidationResult {
   const time = (value: string | undefined, path: string) => {
     if (value !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(value))
       add('INVALID_TIME', path, 'Expected a local time in HH:mm format.');
+  };
+  const preparedContent = (
+    value: {
+      visitBrief?: string;
+      highlights?: readonly string[];
+    },
+    path: string,
+    subject: 'A Stop' | 'A visit plan item',
+  ) => {
+    if (
+      value.visitBrief !== undefined &&
+      (!value.visitBrief.trim() || value.visitBrief !== value.visitBrief.trim())
+    )
+      add(
+        'INVALID_VISIT_BRIEF',
+        `${path}.visitBrief`,
+        'Visit brief must be a non-empty trimmed string.',
+      );
+    if (value.highlights?.length === 0)
+      add(
+        'INVALID_HIGHLIGHT',
+        `${path}.highlights`,
+        'Highlights must be omitted or contain at least one item.',
+      );
+    if ((value.highlights?.length ?? 0) > MAX_STOP_HIGHLIGHTS)
+      add(
+        'TOO_MANY_HIGHLIGHTS',
+        `${path}.highlights`,
+        `${subject} may contain at most ${MAX_STOP_HIGHLIGHTS} highlights.`,
+      );
+    value.highlights?.forEach((highlight, highlightIndex) => {
+      if (!highlight.trim() || highlight !== highlight.trim())
+        add(
+          'INVALID_HIGHLIGHT',
+          `${path}.highlights[${highlightIndex}]`,
+          'Highlight must be a non-empty trimmed string.',
+        );
+    });
   };
 
   id(trip.id, 'id');
@@ -169,35 +211,48 @@ export function validateTrip(trip: Trip): TripValidationResult {
 
   trip.stops.forEach((stop, index) => {
     const path = `stops[${index}]`;
-    if (
-      stop.visitBrief !== undefined &&
-      (!stop.visitBrief.trim() || stop.visitBrief !== stop.visitBrief.trim())
-    )
-      add(
-        'INVALID_VISIT_BRIEF',
-        `${path}.visitBrief`,
-        'Visit brief must be a non-empty trimmed string.',
-      );
-    if (stop.highlights?.length === 0)
-      add(
-        'INVALID_HIGHLIGHT',
-        `${path}.highlights`,
-        'Highlights must be omitted or contain at least one item.',
-      );
-    if ((stop.highlights?.length ?? 0) > MAX_STOP_HIGHLIGHTS)
-      add(
-        'TOO_MANY_HIGHLIGHTS',
-        `${path}.highlights`,
-        `A Stop may contain at most ${MAX_STOP_HIGHLIGHTS} highlights.`,
-      );
-    stop.highlights?.forEach((highlight, highlightIndex) => {
-      if (!highlight.trim() || highlight !== highlight.trim())
+    preparedContent(stop, path, 'A Stop');
+    if (stop.visitPlan !== undefined) {
+      const itemIds = new Set<string>();
+      const itemOrders = new Set<number>();
+      if (stop.visitPlan.items.length === 0)
         add(
-          'INVALID_HIGHLIGHT',
-          `${path}.highlights[${highlightIndex}]`,
-          'Highlight must be a non-empty trimmed string.',
+          'EMPTY_VISIT_PLAN',
+          `${path}.visitPlan.items`,
+          'Visit plan must be omitted or contain at least one item.',
         );
-    });
+      stop.visitPlan.items.forEach((item, itemIndex) => {
+        const itemPath = `${path}.visitPlan.items[${itemIndex}]`;
+        id(item.id, `${itemPath}.id`);
+        if (itemIds.has(item.id))
+          add(
+            'DUPLICATE_VISIT_PLAN_ITEM_ID',
+            `${itemPath}.id`,
+            `Visit plan item identity "${item.id}" is repeated within this Stop.`,
+          );
+        itemIds.add(item.id);
+        if (!Number.isSafeInteger(item.order) || item.order < 0)
+          add(
+            'INVALID_ORDER',
+            `${itemPath}.order`,
+            'Order must be a nonnegative safe integer.',
+          );
+        if (itemOrders.has(item.order))
+          add(
+            'DUPLICATE_VISIT_PLAN_ITEM_ORDER',
+            `${itemPath}.order`,
+            `Order ${item.order} is repeated within this Stop's visit plan.`,
+          );
+        itemOrders.add(item.order);
+        if (!item.name.trim() || item.name !== item.name.trim())
+          add(
+            'INVALID_VISIT_PLAN_ITEM_NAME',
+            `${itemPath}.name`,
+            'Visit plan item name must be a non-empty trimmed string.',
+          );
+        preparedContent(item, itemPath, 'A visit plan item');
+      });
+    }
     number(stop.latitude, `${path}.latitude`, -90, 90);
     number(stop.longitude, `${path}.longitude`, -180, 180);
     number(stop.plannedVisitMinutes, `${path}.plannedVisitMinutes`);

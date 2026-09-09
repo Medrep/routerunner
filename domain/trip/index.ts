@@ -1,5 +1,10 @@
-export { createPostDayDestinationId, createStopId } from './types.ts';
+export {
+  createPostDayDestinationId,
+  createStopId,
+  createStopVisitPlanItemId,
+} from './types.ts';
 export { originalPlannedDayId } from './original-planned-day.ts';
+export { orderedStopVisitPlanItems } from './ordered-stop-visit-plan.ts';
 export {
   MAX_NAVIGATION_WAYPOINTS,
   MAX_STOP_HIGHLIGHTS,
@@ -23,6 +28,9 @@ export type {
   Stop,
   StopId,
   StopPriority,
+  StopVisitPlan,
+  StopVisitPlanItem,
+  StopVisitPlanItemId,
   TimeConstraint,
   TravelMode,
   Trip,

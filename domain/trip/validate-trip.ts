@@ -17,7 +17,11 @@ export type TripValidationCode =
   | 'INVALID_TIME_ZONE'
   | 'INVALID_NUMBER'
   | 'INVALID_NAVIGATION_TARGET'
+  | 'TOO_MANY_NAVIGATION_WAYPOINTS'
+  | 'UNSUPPORTED_NAVIGATION_WAYPOINT_MODE'
   | 'POST_DAY_IDENTITY_COLLISION';
+
+export const MAX_NAVIGATION_WAYPOINTS = 3;
 
 export interface TripValidationError {
   code: TripValidationCode;
@@ -247,6 +251,33 @@ export function validateTrip(trip: Trip): TripValidationResult {
       number(
         point.longitude,
         `${path}.geometry[${pointIndex}].longitude`,
+        -180,
+        180,
+      );
+    });
+    const waypoints = leg.navigationWaypoints ?? [];
+    if (waypoints.length > MAX_NAVIGATION_WAYPOINTS)
+      add(
+        'TOO_MANY_NAVIGATION_WAYPOINTS',
+        `${path}.navigationWaypoints`,
+        `A Leg may contain at most ${MAX_NAVIGATION_WAYPOINTS} navigation waypoints.`,
+      );
+    if (waypoints.length > 0 && leg.mode !== 'walk')
+      add(
+        'UNSUPPORTED_NAVIGATION_WAYPOINT_MODE',
+        `${path}.navigationWaypoints`,
+        `Navigation waypoints require walk mode; Google Maps does not support multi-destination public transport directions.`,
+      );
+    waypoints.forEach((point, pointIndex) => {
+      number(
+        point.latitude,
+        `${path}.navigationWaypoints[${pointIndex}].latitude`,
+        -90,
+        90,
+      );
+      number(
+        point.longitude,
+        `${path}.navigationWaypoints[${pointIndex}].longitude`,
         -180,
         180,
       );

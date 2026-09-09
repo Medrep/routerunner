@@ -264,6 +264,7 @@ export const copenhagenTrip: Trip = {
       fromStopId: copenhagenStopIds.marbleChurch,
       toStopId: copenhagenStopIds.gefionFountain,
       mode: 'walk',
+      navigationWaypoints: [{ latitude: 55.6846, longitude: 12.5964 }],
     },
     {
       id: 'copenhagen-gefion-fountain-kastellet',

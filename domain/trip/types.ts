@@ -84,6 +84,9 @@ export interface LegGeometryPoint {
   longitude: number;
 }
 
+/** Ordered path-shaping data for an external navigator; never a Trip Stop. */
+export type NavigationWaypoint = Readonly<LegGeometryPoint>;
+
 export interface Leg {
   id: string;
   fromStopId: StopId;
@@ -93,6 +96,7 @@ export interface Leg {
   distanceMeters?: number;
   instruction?: string;
   geometry?: LegGeometryPoint[];
+  navigationWaypoints?: readonly NavigationWaypoint[];
 }
 
 export interface BufferBelowRule {

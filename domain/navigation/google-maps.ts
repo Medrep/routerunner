@@ -4,7 +4,7 @@ import type {
   ExecutionStorage,
   PersistExecutionTransitionResult,
 } from '../execution/persistence.ts';
-import type { TravelMode, Trip } from '../trip/types.ts';
+import type { Leg, TravelMode, Trip } from '../trip/types.ts';
 import type { TripExecutionState } from '../execution/types.ts';
 
 export type GoogleMapsTravelMode = 'walking' | 'transit';
@@ -25,6 +25,7 @@ export function googleMapsTravelMode(
 export function buildGoogleMapsNavigationUrl(
   destination: GoogleMapsDestination,
   travelMode?: GoogleMapsTravelMode,
+  waypoints: readonly GoogleMapsDestination[] = [],
 ): string {
   const url = new URL('https://www.google.com/maps/dir/');
   url.searchParams.set('api', '1');
@@ -33,13 +34,21 @@ export function buildGoogleMapsNavigationUrl(
     `${destination.latitude},${destination.longitude}`,
   );
   if (travelMode) url.searchParams.set('travelmode', travelMode);
+  if (waypoints.length > 0) {
+    url.searchParams.set(
+      'waypoints',
+      waypoints
+        .map((waypoint) => `${waypoint.latitude},${waypoint.longitude}`)
+        .join('|'),
+    );
+  }
   return url.toString();
 }
 
-function currentInboundMode(
+function currentInboundLeg(
   trip: Trip,
   state: TripExecutionState,
-): TravelMode | undefined {
+): Leg | undefined {
   const inbound = state.currentInboundTravel;
   if (!inbound?.fromStopId || inbound.toStopId !== state.currentStopId) {
     return undefined;
@@ -49,7 +58,7 @@ function currentInboundMode(
       leg.fromStopId === inbound.fromStopId &&
       leg.toStopId === inbound.toStopId,
   );
-  return matches.length === 1 ? matches[0].mode : undefined;
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export function currentGoogleMapsNavigationUrl(
@@ -59,9 +68,11 @@ export function currentGoogleMapsNavigationUrl(
   if (!state.currentStopId) return undefined;
   const current = trip.stops.find((stop) => stop.id === state.currentStopId);
   if (!current) return undefined;
+  const inboundLeg = currentInboundLeg(trip, state);
   return buildGoogleMapsNavigationUrl(
     { latitude: current.latitude, longitude: current.longitude },
-    googleMapsTravelMode(currentInboundMode(trip, state)),
+    googleMapsTravelMode(inboundLeg?.mode),
+    inboundLeg?.mode === 'walk' ? inboundLeg.navigationWaypoints : undefined,
   );
 }
 

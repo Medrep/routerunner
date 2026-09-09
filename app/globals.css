@@ -535,7 +535,7 @@ body {
   bottom: 3px;
 }
 .mapbox-stop-marker {
-  position: relative;
+  position: absolute;
   width: 32px;
   height: 32px;
   display: grid;

@@ -1,9 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { Map as MapboxMap, Marker } from 'mapbox-gl';
+import type { GeoJSONSource, Map as MapboxMap, Marker } from 'mapbox-gl';
 import type { ForegroundLocationState, RouteMapView, StopId } from '@/domain';
 import { mapboxTokenState } from '@/domain';
+
+const plannedPathSourceId = 'active-planned-path';
+const plannedPathLayerId = 'active-planned-path-guide';
 
 function removeMarkers(markers: Map<string, Marker>): void {
   for (const marker of markers.values()) marker.remove();
@@ -53,6 +56,50 @@ export default function RouteMap({
   function updateOverlays(map: MapboxMap): void {
     const mapbox = moduleRef.current;
     if (!mapbox || !map.isStyleLoaded()) return;
+
+    const plannedPathData = {
+      type: 'FeatureCollection' as const,
+      features: viewRef.current.plannedPath
+        ? [
+            {
+              type: 'Feature' as const,
+              properties: {},
+              geometry: {
+                type: 'LineString' as const,
+                coordinates: viewRef.current.plannedPath.coordinates,
+              },
+            },
+          ]
+        : [],
+    };
+    const plannedPathSource = map.getSource(plannedPathSourceId) as
+      | GeoJSONSource
+      | undefined;
+    if (plannedPathSource) {
+      plannedPathSource.setData(plannedPathData);
+    } else {
+      map.addSource(plannedPathSourceId, {
+        type: 'geojson',
+        data: plannedPathData,
+      });
+    }
+    if (!map.getLayer(plannedPathLayerId)) {
+      map.addLayer({
+        id: plannedPathLayerId,
+        type: 'line',
+        source: plannedPathSourceId,
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+        paint: {
+          'line-color': '#486f5d',
+          'line-width': 4,
+          'line-opacity': 0.72,
+          'line-dasharray': [1.4, 1.8],
+        },
+      });
+    }
 
     removeMarkers(stopMarkersRef.current);
     for (const stop of viewRef.current.stops) {

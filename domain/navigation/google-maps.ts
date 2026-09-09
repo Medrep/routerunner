@@ -1,10 +1,14 @@
 import { persistExecutionTransition } from '../execution/persistence.ts';
 import { startDay } from '../execution/transitions.ts';
+import {
+  resolveCurrentInboundLeg,
+  resolveWaypointSafeInboundLeg,
+} from './waypoint-safe-inbound-leg.ts';
 import type {
   ExecutionStorage,
   PersistExecutionTransitionResult,
 } from '../execution/persistence.ts';
-import type { Leg, TravelMode, Trip } from '../trip/types.ts';
+import type { TravelMode, Trip } from '../trip/types.ts';
 import type { TripExecutionState } from '../execution/types.ts';
 
 export type GoogleMapsTravelMode = 'walking' | 'transit';
@@ -45,32 +49,6 @@ export function buildGoogleMapsNavigationUrl(
   return url.toString();
 }
 
-function currentInboundLeg(
-  trip: Trip,
-  state: TripExecutionState,
-): Leg | undefined {
-  const inbound = state.currentInboundTravel;
-  if (!inbound?.fromStopId || inbound.toStopId !== state.currentStopId) {
-    return undefined;
-  }
-  const matches = (trip.legs ?? []).filter(
-    (leg) =>
-      leg.fromStopId === inbound.fromStopId &&
-      leg.toStopId === inbound.toStopId,
-  );
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
-function hasCompletedWaypointProvenance(state: TripExecutionState): boolean {
-  const fromStopId = state.currentInboundTravel?.fromStopId;
-  if (!fromStopId) return false;
-  const sourceExecution = state.stopExecutions[fromStopId];
-  return (
-    sourceExecution?.stopId === fromStopId &&
-    sourceExecution.status === 'completed'
-  );
-}
-
 export function currentGoogleMapsNavigationUrl(
   trip: Trip,
   state: TripExecutionState,
@@ -78,13 +56,12 @@ export function currentGoogleMapsNavigationUrl(
   if (!state.currentStopId) return undefined;
   const current = trip.stops.find((stop) => stop.id === state.currentStopId);
   if (!current) return undefined;
-  const inboundLeg = currentInboundLeg(trip, state);
+  const inboundLeg = resolveCurrentInboundLeg(trip, state);
+  const waypointSafeInboundLeg = resolveWaypointSafeInboundLeg(trip, state);
   return buildGoogleMapsNavigationUrl(
     { latitude: current.latitude, longitude: current.longitude },
     googleMapsTravelMode(inboundLeg?.mode),
-    inboundLeg?.mode === 'walk' && hasCompletedWaypointProvenance(state)
-      ? inboundLeg.navigationWaypoints
-      : undefined,
+    waypointSafeInboundLeg?.navigationWaypoints,
   );
 }
 

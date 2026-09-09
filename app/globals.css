@@ -597,6 +597,41 @@ body {
 .mapbox-stop-marker.optional {
   border-radius: 7px;
 }
+.mapbox-via-marker {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+.mapbox-via-marker::before {
+  position: absolute;
+  inset: 1px;
+  content: '';
+  transform: rotate(45deg);
+  border: 2px solid #557565;
+  border-radius: 2px;
+  background: #f8fbf8;
+  box-shadow:
+    0 0 0 2px #ffffffcc,
+    0 2px 6px #18362b38;
+}
+.mapbox-via-marker > span {
+  position: absolute;
+  top: 50%;
+  left: 19px;
+  transform: translateY(-50%);
+  padding: 3px 6px;
+  border: 1px solid #c4d2c8;
+  border-radius: 5px;
+  color: #355345;
+  background: #fffffff0;
+  box-shadow: 0 1px 4px #18362b24;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
 .mapbox-user-marker {
   width: 18px;
   height: 18px;

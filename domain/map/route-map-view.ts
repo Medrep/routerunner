@@ -35,19 +35,15 @@ export interface RouteMapLegView {
   representation: 'prepared-geometry' | 'schematic-endpoints';
 }
 
-export interface RouteMapPlannedPathView {
-  readonly fromStopId: StopId;
-  readonly toStopId: StopId;
-  readonly coordinates: readonly (readonly [
-    longitude: number,
-    latitude: number,
-  ])[];
+export interface RouteMapNavigationViaPointView {
+  readonly longitude: number;
+  readonly latitude: number;
 }
 
 export interface RouteMapView {
   stops: RouteMapStopView[];
   legs: RouteMapLegView[];
-  plannedPath?: RouteMapPlannedPathView;
+  navigationViaPoints: readonly RouteMapNavigationViaPointView[];
   userLocation?: ForegroundCoordinates;
   routePresentation:
     | 'prepared-geometry'
@@ -73,6 +69,7 @@ export function deriveRouteMapView(
     return {
       stops: [],
       legs: [],
+      navigationViaPoints: [],
       userLocation,
       routePresentation: 'unavailable',
     };
@@ -81,24 +78,11 @@ export function deriveRouteMapView(
   const nextStopId = nextEligiblePendingStopId(trip, execution);
   const stopById = new Map(trip.stops.map((stop) => [stop.id, stop]));
   const waypointSafeInboundLeg = resolveWaypointSafeInboundLeg(trip, execution);
-  const plannedPath = (() => {
-    if (!waypointSafeInboundLeg) return undefined;
-    const from = stopById.get(waypointSafeInboundLeg.fromStopId);
-    const to = stopById.get(waypointSafeInboundLeg.toStopId);
-    if (!from || !to) return undefined;
-
-    return {
-      fromStopId: waypointSafeInboundLeg.fromStopId,
-      toStopId: waypointSafeInboundLeg.toStopId,
-      coordinates: [
-        [from.longitude, from.latitude] as const,
-        ...waypointSafeInboundLeg.navigationWaypoints!.map(
-          (point) => [point.longitude, point.latitude] as const,
-        ),
-        [to.longitude, to.latitude] as const,
-      ],
-    } satisfies RouteMapPlannedPathView;
-  })();
+  const navigationViaPoints: readonly RouteMapNavigationViaPointView[] =
+    waypointSafeInboundLeg?.navigationWaypoints?.map((point) => ({
+      longitude: point.longitude,
+      latitude: point.latitude,
+    })) ?? [];
   const orderedPlan = orderedDayPlan(day);
   const stops = orderedPlan.flatMap<RouteMapStopView>((item, index) => {
     const stop = stopById.get(item.stopId);
@@ -173,7 +157,7 @@ export function deriveRouteMapView(
   return {
     stops,
     legs,
-    plannedPath,
+    navigationViaPoints,
     userLocation,
     routePresentation: representations.has('schematic-endpoints')
       ? 'schematic-endpoints'

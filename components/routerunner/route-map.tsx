@@ -1,14 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { GeoJSONSource, Map as MapboxMap, Marker } from 'mapbox-gl';
+import type { Map as MapboxMap, Marker } from 'mapbox-gl';
 import type { ForegroundLocationState, RouteMapView, StopId } from '@/domain';
 import { mapboxTokenState } from '@/domain';
 
-const plannedPathSourceId = 'active-planned-path';
-const plannedPathLayerId = 'active-planned-path-guide';
-
-function removeMarkers(markers: Map<string, Marker>): void {
+function removeMarkers<Key>(markers: Map<Key, Marker>): void {
   for (const marker of markers.values()) marker.remove();
   markers.clear();
 }
@@ -47,6 +44,7 @@ export default function RouteMap({
   const mapRef = useRef<MapboxMap | null>(null);
   const moduleRef = useRef<typeof import('mapbox-gl') | null>(null);
   const stopMarkersRef = useRef(new Map<string, Marker>());
+  const viaMarkersRef = useRef(new Map<number, Marker>());
   const userMarkerRef = useRef<Marker | null>(null);
   const viewRef = useRef(view);
   const onStopRef = useRef(onStop);
@@ -57,48 +55,25 @@ export default function RouteMap({
     const mapbox = moduleRef.current;
     if (!mapbox || !map.isStyleLoaded()) return;
 
-    const plannedPathData = {
-      type: 'FeatureCollection' as const,
-      features: viewRef.current.plannedPath
-        ? [
-            {
-              type: 'Feature' as const,
-              properties: {},
-              geometry: {
-                type: 'LineString' as const,
-                coordinates: viewRef.current.plannedPath.coordinates,
-              },
-            },
-          ]
-        : [],
-    };
-    const plannedPathSource = map.getSource(plannedPathSourceId) as
-      | GeoJSONSource
-      | undefined;
-    if (plannedPathSource) {
-      plannedPathSource.setData(plannedPathData);
-    } else {
-      map.addSource(plannedPathSourceId, {
-        type: 'geojson',
-        data: plannedPathData,
-      });
-    }
-    if (!map.getLayer(plannedPathLayerId)) {
-      map.addLayer({
-        id: plannedPathLayerId,
-        type: 'line',
-        source: plannedPathSourceId,
-        layout: {
-          'line-cap': 'round',
-          'line-join': 'round',
-        },
-        paint: {
-          'line-color': '#486f5d',
-          'line-width': 4,
-          'line-opacity': 0.72,
-          'line-dasharray': [1.4, 1.8],
-        },
-      });
+    removeMarkers(viaMarkersRef.current);
+    for (const [
+      index,
+      point,
+    ] of viewRef.current.navigationViaPoints.entries()) {
+      const viaElement = document.createElement('div');
+      viaElement.className = 'mapbox-via-marker';
+      viaElement.setAttribute('aria-label', 'Via planned route');
+      viaElement.title = 'Via planned route';
+      const viaLabel = document.createElement('span');
+      viaLabel.textContent = 'Via';
+      viaElement.appendChild(viaLabel);
+      const marker = new mapbox.default.Marker({
+        element: viaElement,
+        anchor: 'center',
+      })
+        .setLngLat([point.longitude, point.latitude])
+        .addTo(map);
+      viaMarkersRef.current.set(index, marker);
     }
 
     removeMarkers(stopMarkersRef.current);
@@ -160,6 +135,7 @@ export default function RouteMap({
     let resizeObserver: ResizeObserver | undefined;
     let resizeFrame: number | undefined;
     const stopMarkers = stopMarkersRef.current;
+    const viaMarkers = viaMarkersRef.current;
     void import('mapbox-gl')
       .then((mapbox) => {
         if (cancelled || !containerRef.current) return;
@@ -204,6 +180,7 @@ export default function RouteMap({
       resizeObserver?.disconnect();
       if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame);
       removeMarkers(stopMarkers);
+      removeMarkers(viaMarkers);
       userMarkerRef.current?.remove();
       userMarkerRef.current = null;
       mapRef.current?.remove();

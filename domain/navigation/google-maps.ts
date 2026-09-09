@@ -61,6 +61,16 @@ function currentInboundLeg(
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+function hasCompletedWaypointProvenance(state: TripExecutionState): boolean {
+  const fromStopId = state.currentInboundTravel?.fromStopId;
+  if (!fromStopId) return false;
+  const sourceExecution = state.stopExecutions[fromStopId];
+  return (
+    sourceExecution?.stopId === fromStopId &&
+    sourceExecution.status === 'completed'
+  );
+}
+
 export function currentGoogleMapsNavigationUrl(
   trip: Trip,
   state: TripExecutionState,
@@ -72,7 +82,9 @@ export function currentGoogleMapsNavigationUrl(
   return buildGoogleMapsNavigationUrl(
     { latitude: current.latitude, longitude: current.longitude },
     googleMapsTravelMode(inboundLeg?.mode),
-    inboundLeg?.mode === 'walk' ? inboundLeg.navigationWaypoints : undefined,
+    inboundLeg?.mode === 'walk' && hasCompletedWaypointProvenance(state)
+      ? inboundLeg.navigationWaypoints
+      : undefined,
   );
 }
 

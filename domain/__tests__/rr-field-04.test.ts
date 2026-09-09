@@ -8,6 +8,10 @@ import {
   createStopId,
   currentGoogleMapsNavigationUrl,
   deriveRouteMapView,
+  loadExecutionState,
+  saveCurrentForLater,
+  saveExecutionState,
+  skipCurrentStop,
   startDay,
   startDayAndBuildNavigation,
   validateTrip,
@@ -37,6 +41,82 @@ function activeCopenhagenState(): TripExecutionState {
       startedAt,
     ),
   );
+}
+
+function marbleChurchCurrentState(): TripExecutionState {
+  let state = activeCopenhagenState();
+  for (let completed = 0; completed < 2; completed += 1) {
+    state = acceptedState(
+      completeCurrentStop(copenhagenTrip, state, state.lastUpdatedAt),
+    );
+  }
+  assert.equal(state.currentStopId, copenhagenStopIds.marbleChurch);
+  return state;
+}
+
+type CurrentTransition = (
+  trip: Trip,
+  state: TripExecutionState,
+  now: string,
+) => TransitionResult;
+
+const waypointProvenanceCases: {
+  name: string;
+  transition: CurrentTransition;
+  sourceStatus: 'completed' | 'skipped' | 'pending';
+  expectedWaypoint: string | null;
+}[] = [
+  {
+    name: 'Done',
+    transition: completeCurrentStop,
+    sourceStatus: 'completed',
+    expectedWaypoint: '55.6846,12.5964',
+  },
+  {
+    name: 'Skip',
+    transition: skipCurrentStop,
+    sourceStatus: 'skipped',
+    expectedWaypoint: null,
+  },
+  {
+    name: 'Save for later',
+    transition: saveCurrentForLater,
+    sourceStatus: 'pending',
+    expectedWaypoint: null,
+  },
+];
+
+function transitionMarmorkirkenToGefion(
+  transition: CurrentTransition,
+): TripExecutionState {
+  const state = acceptedState(
+    transition(
+      copenhagenTrip,
+      marbleChurchCurrentState(),
+      '2026-09-08T09:00:00.000Z',
+    ),
+  );
+  assert.equal(state.currentStopId, copenhagenStopIds.gefionFountain);
+  assert.deepEqual(state.currentInboundTravel, {
+    fromStopId: copenhagenStopIds.marbleChurch,
+    toStopId: copenhagenStopIds.gefionFountain,
+    duration: { status: 'unknown', reason: 'unresolved' },
+  });
+  return state;
+}
+
+function navigationParams(state: TripExecutionState): URLSearchParams {
+  return new URL(currentGoogleMapsNavigationUrl(copenhagenTrip, state)!)
+    .searchParams;
+}
+
+function memoryStorage() {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  };
 }
 
 function waypointValidationTrip(): Trip {
@@ -202,25 +282,58 @@ void test('navigation waypoints remain Leg data and never become execution or ma
   assert.equal(deriveRouteMapView(copenhagenTrip, state).stops.length, 16);
 });
 
-void test('actual Current inbound Leg supplies its waypoints and walking mode', () => {
-  let state = activeCopenhagenState();
-  for (let completed = 0; completed < 3; completed += 1) {
-    state = acceptedState(
-      completeCurrentStop(copenhagenTrip, state, state.lastUpdatedAt),
+for (const provenanceCase of waypointProvenanceCases) {
+  void test(`${provenanceCase.name} Marmorkirken to Gefion enforces completed waypoint provenance`, () => {
+    const tripBefore = structuredClone(copenhagenTrip);
+    const state = transitionMarmorkirkenToGefion(provenanceCase.transition);
+    const stateBeforeNavigation = structuredClone(state);
+    assert.equal(
+      state.stopExecutions[copenhagenStopIds.marbleChurch].status,
+      provenanceCase.sourceStatus,
     );
-  }
-  assert.equal(state.currentStopId, copenhagenStopIds.gefionFountain);
-  assert.deepEqual(state.currentInboundTravel, {
-    fromStopId: copenhagenStopIds.marbleChurch,
-    toStopId: copenhagenStopIds.gefionFountain,
-    duration: { status: 'unknown', reason: 'unresolved' },
+
+    const params = navigationParams(state);
+    assert.equal(params.get('destination'), '55.6890868,12.597464');
+    assert.equal(params.get('travelmode'), 'walking');
+    assert.equal(params.get('waypoints'), provenanceCase.expectedWaypoint);
+    assert.equal(params.get('origin'), null);
+    assert.deepEqual(state, stateBeforeNavigation);
+    assert.deepEqual(copenhagenTrip, tripBefore);
   });
 
-  const url = new URL(currentGoogleMapsNavigationUrl(copenhagenTrip, state)!);
-  assert.equal(url.searchParams.get('destination'), '55.6890868,12.597464');
-  assert.equal(url.searchParams.get('travelmode'), 'walking');
-  assert.equal(url.searchParams.get('waypoints'), '55.6846,12.5964');
-  assert.equal(url.searchParams.get('origin'), null);
+  void test(`${provenanceCase.name} waypoint provenance survives persistence hydration`, () => {
+    const storage = memoryStorage();
+    const state = transitionMarmorkirkenToGefion(provenanceCase.transition);
+    const stateBeforePersistence = structuredClone(state);
+    assert.deepEqual(
+      saveExecutionState(copenhagenTrip, state, state.lastUpdatedAt, storage),
+      { status: 'saved', savedAt: state.lastUpdatedAt },
+    );
+    const loaded = loadExecutionState(copenhagenTrip, storage);
+    assert.equal(loaded.status, 'restored');
+    assert.equal(
+      navigationParams(loaded.state).get('waypoints'),
+      provenanceCase.expectedWaypoint,
+    );
+    assert.equal(navigationParams(loaded.state).get('travelmode'), 'walking');
+    assert.deepEqual(state, stateBeforePersistence);
+  });
+}
+
+void test('missing inbound source execution suppresses waypoints but preserves mode', () => {
+  const state = transitionMarmorkirkenToGefion(completeCurrentStop);
+  const incompleteState: TripExecutionState = {
+    ...state,
+    stopExecutions: { ...state.stopExecutions },
+  };
+  delete incompleteState.stopExecutions[copenhagenStopIds.marbleChurch];
+  const beforeNavigation = structuredClone(incompleteState);
+
+  const params = navigationParams(incompleteState);
+  assert.equal(params.get('destination'), '55.6890868,12.597464');
+  assert.equal(params.get('travelmode'), 'walking');
+  assert.equal(params.get('waypoints'), null);
+  assert.deepEqual(incompleteState, beforeNavigation);
 });
 
 void test('unrelated and ambiguous Leg waypoints cannot leak into Current navigation', () => {
@@ -281,6 +394,7 @@ void test('Start & Navigate to the first stop does not use unrelated waypoints',
     },
   );
   assert.equal(result.status, 'accepted');
+  assert.equal(result.result.state.currentInboundTravel?.fromStopId, null);
   const url = new URL(result.navigationUrl!);
   assert.equal(url.searchParams.get('destination'), '55.6797,12.5909');
   assert.equal(url.searchParams.get('waypoints'), null);

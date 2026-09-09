@@ -32,6 +32,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import RouteMap from '@/components/routerunner/route-map';
+import { StopVisitContent } from '@/components/routerunner/stop-visit-content-view';
 import {
   Sheet,
   SheetClose,
@@ -393,6 +394,7 @@ function ExecutionPage() {
                     </div>
                     <ChevronRight size={22} />
                   </button>
+                  <StopVisitContent stop={displayedStop} surface="current" />
                   {!started && (
                     <p className="start-intro">
                       A waterfront morning, a walk through the city, and a
@@ -628,6 +630,7 @@ function ExecutionPage() {
                 {' · '}
                 {priorityLabel(detailStop)}
               </SheetDescription>
+              <StopVisitContent stop={detailStop} surface="details" />
               {detailStop.id === copenhagenStopIds.kastellet && (
                 <figure className="stop-photo">
                   <img
@@ -654,10 +657,6 @@ function ExecutionPage() {
                   </figcaption>
                 </figure>
               )}
-              <p className="stop-note">
-                This stop remains in the immutable Copenhagen plan. Runtime
-                actions update only its trip execution state.
-              </p>
               {started && detail === execution.currentStopId && nextStop && (
                 <div className="detail-next">
                   <ArrowRight size={20} />

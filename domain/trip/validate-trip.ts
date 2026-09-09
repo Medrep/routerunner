@@ -16,12 +16,16 @@ export type TripValidationCode =
   | 'INVALID_TIME'
   | 'INVALID_TIME_ZONE'
   | 'INVALID_NUMBER'
+  | 'INVALID_VISIT_BRIEF'
+  | 'INVALID_HIGHLIGHT'
+  | 'TOO_MANY_HIGHLIGHTS'
   | 'INVALID_NAVIGATION_TARGET'
   | 'TOO_MANY_NAVIGATION_WAYPOINTS'
   | 'UNSUPPORTED_NAVIGATION_WAYPOINT_MODE'
   | 'POST_DAY_IDENTITY_COLLISION';
 
 export const MAX_NAVIGATION_WAYPOINTS = 3;
+export const MAX_STOP_HIGHLIGHTS = 4;
 
 export interface TripValidationError {
   code: TripValidationCode;
@@ -165,6 +169,35 @@ export function validateTrip(trip: Trip): TripValidationResult {
 
   trip.stops.forEach((stop, index) => {
     const path = `stops[${index}]`;
+    if (
+      stop.visitBrief !== undefined &&
+      (!stop.visitBrief.trim() || stop.visitBrief !== stop.visitBrief.trim())
+    )
+      add(
+        'INVALID_VISIT_BRIEF',
+        `${path}.visitBrief`,
+        'Visit brief must be a non-empty trimmed string.',
+      );
+    if (stop.highlights?.length === 0)
+      add(
+        'INVALID_HIGHLIGHT',
+        `${path}.highlights`,
+        'Highlights must be omitted or contain at least one item.',
+      );
+    if ((stop.highlights?.length ?? 0) > MAX_STOP_HIGHLIGHTS)
+      add(
+        'TOO_MANY_HIGHLIGHTS',
+        `${path}.highlights`,
+        `A Stop may contain at most ${MAX_STOP_HIGHLIGHTS} highlights.`,
+      );
+    stop.highlights?.forEach((highlight, highlightIndex) => {
+      if (!highlight.trim() || highlight !== highlight.trim())
+        add(
+          'INVALID_HIGHLIGHT',
+          `${path}.highlights[${highlightIndex}]`,
+          'Highlight must be a non-empty trimmed string.',
+        );
+    });
     number(stop.latitude, `${path}.latitude`, -90, 90);
     number(stop.longitude, `${path}.longitude`, -180, 180);
     number(stop.plannedVisitMinutes, `${path}.plannedVisitMinutes`);

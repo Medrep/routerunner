@@ -1,6 +1,10 @@
 export { createPostDayDestinationId, createStopId } from './types.ts';
 export { originalPlannedDayId } from './original-planned-day.ts';
-export { MAX_NAVIGATION_WAYPOINTS, validateTrip } from './validate-trip.ts';
+export {
+  MAX_NAVIGATION_WAYPOINTS,
+  MAX_STOP_HIGHLIGHTS,
+  validateTrip,
+} from './validate-trip.ts';
 export type {
   TripValidationCode,
   TripValidationError,

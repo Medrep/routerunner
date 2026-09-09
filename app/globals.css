@@ -853,6 +853,33 @@ body {
   font-size: 29px;
   letter-spacing: -1px;
 }
+.stop-visit-content.current {
+  margin: 17px 55px 0;
+}
+.visit-brief {
+  color: #334d3f;
+  font-size: 16px;
+  line-height: 1.55;
+}
+.stop-highlights {
+  margin-top: 13px;
+}
+.stop-highlights h3 {
+  color: #53675b;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.stop-highlights ul {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+  padding-left: 19px;
+  color: #44594c;
+  font-size: 14px;
+  line-height: 1.45;
+}
 .next-step {
   margin-top: 24px;
   padding-top: 21px;
@@ -1354,6 +1381,9 @@ footer small {
   color: #5a6d54;
   margin-top: 9px;
 }
+.stop-visit-content.details {
+  margin-top: 21px;
+}
 .stop-photo {
   margin: 22px 0 0;
 }
@@ -1370,11 +1400,6 @@ footer small {
 }
 .stop-photo a {
   text-decoration: underline;
-}
-.stop-note {
-  font-size: 16px;
-  line-height: 1.7;
-  margin-top: 23px;
 }
 .detail-next {
   display: flex;
@@ -1552,6 +1577,9 @@ footer small {
   .now p {
     font-size: 13px;
   }
+  .stop-visit-content.current {
+    margin: 15px 0 0;
+  }
   .next-step {
     margin-top: 18px;
     padding-top: 16px;
@@ -1647,9 +1675,6 @@ footer small {
   }
   .stop-sheet[data-slot] {
     padding: 18px 20px 24px;
-  }
-  .stop-note {
-    font-size: 16px;
   }
 }
 @media (max-width: 360px) {

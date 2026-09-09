@@ -39,6 +39,10 @@ export interface Stop {
   id: StopId;
   name: string;
   shortName?: string;
+  /** Prepared field context explaining why to stop and what to know or do. */
+  visitBrief?: string;
+  /** Prepared, ordered things to notice, check, or do at the stop. */
+  highlights?: readonly string[];
   latitude: number;
   longitude: number;
   priority: StopPriority;

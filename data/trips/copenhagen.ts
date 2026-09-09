@@ -53,6 +53,9 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 20,
       note: 'Harbour waterfront and first city stop.',
+      visitBrief:
+        'Start at Copenhagen’s historic waterfront. Walk along the canal and take in the colourful townhouses and harbour activity before continuing.',
+      highlights: ['Colourful canal houses', 'Historic boats', 'Canal view'],
     },
     {
       id: copenhagenStopIds.amalienborg,
@@ -63,6 +66,13 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 15,
       note: 'Exterior and palace square only; no museum or guard-change wait.',
+      visitBrief:
+        'Cross the royal palace square and see its four matching façades. Use this as a short exterior stop, without waiting for a guard change or entering a museum.',
+      highlights: [
+        'Four palace façades',
+        'Equestrian statue',
+        'View toward Marmorkirken',
+      ],
     },
     {
       id: copenhagenStopIds.marbleChurch,
@@ -74,6 +84,9 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 15,
       note: 'Go inside if open.',
+      visitBrief:
+        'This domed church is one of Copenhagen’s landmarks. Step inside if it is open and look up into the circular dome before continuing.',
+      highlights: ['Copper-green dome', 'Circular interior'],
       timeConstraint: { type: 'time_window', start: '10:00', end: '17:00' },
     },
     {
@@ -85,6 +98,8 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 5,
       note: 'Brief waterfront waypoint.',
+      visitBrief:
+        'Pause at this large waterfront fountain to see its dramatic sculpture group, then continue toward Kastellet.',
     },
     {
       id: copenhagenStopIds.kastellet,
@@ -95,6 +110,9 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 35,
       note: 'Walk through the fortress.',
+      visitBrief:
+        'Walk through this preserved star-shaped fortress and along a short stretch of its green ramparts. Notice how the earthworks and moat shape the site.',
+      highlights: ['Star-shaped earthworks', 'Moat', 'Red barracks'],
     },
     {
       id: copenhagenStopIds.littleMermaid,
@@ -105,6 +123,8 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 10,
       note: 'Brief waterfront stop; ten minutes maximum.',
+      visitBrief:
+        'Make a brief stop at the small bronze statue inspired by Hans Christian Andersen’s story. View it from the promenade and continue after a few minutes.',
     },
     {
       id: copenhagenStopIds.reffen,
@@ -116,6 +136,8 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 25,
       note: 'Optional industrial Refshaleøen context; a food stop is not required.',
+      visitBrief:
+        'See the industrial waterfront atmosphere of Refshaleøen and take a short break if useful. Buying food at Reffen is optional.',
     },
     {
       id: copenhagenStopIds.christianshavn,
@@ -126,6 +148,9 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 15,
       note: 'Representative canal-area point for a short canal walk.',
+      visitBrief:
+        'Take a short walk through this canal district to experience its waterside streets, boats, and colourful townhouses.',
+      highlights: ['Canal-side houses', 'Boats and waterside streets'],
     },
     {
       id: copenhagenStopIds.christiania,
@@ -136,6 +161,9 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 25,
       note: 'Intentionally short visit; no automated shortening.',
+      visitBrief:
+        'Walk briefly and respectfully through this self-governing alternative community. Follow posted photography guidance and notice the art and handmade spaces.',
+      highlights: ['Street art', 'Handmade buildings', 'Posted local guidance'],
     },
     {
       id: copenhagenStopIds.blackDiamond,
@@ -146,6 +174,13 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 25,
       note: 'Exterior plus public interior and atrium.',
+      visitBrief:
+        'See the modern waterfront extension of the Royal Danish Library. Look at the black granite façade, then step into the public atrium if accessible.',
+      highlights: [
+        'Black granite exterior',
+        'Public atrium',
+        'Harbour reflections',
+      ],
     },
     {
       id: copenhagenStopIds.christiansborg,
@@ -157,6 +192,8 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 10,
       note: 'Exterior only.',
+      visitBrief:
+        'Pause outside the palace that houses Denmark’s parliament and royal reception rooms. Take in the courtyards and exterior before heading to the Tower.',
     },
     {
       id: copenhagenStopIds.christiansborgTower,
@@ -167,6 +204,9 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 40,
       note: 'Viewpoint, including a reasonable queue; no automatic queue logic.',
+      visitBrief:
+        'Go up for a broad view over central Copenhagen if access is open. Allow time for a reasonable queue, then use the viewpoint to orient yourself across the city.',
+      highlights: ['Old-centre rooftops', 'Church spires', 'Harbour skyline'],
       timeConstraint: { type: 'time_window', start: '11:00', end: '21:00' },
     },
     {
@@ -179,6 +219,8 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 25,
       note: 'Representative old-centre point for urban sightseeing on foot, not primarily shopping.',
+      visitBrief:
+        'Walk this pedestrian route through the old centre for the street life and historic urban setting. Shopping is optional, not the purpose of the stop.',
     },
     {
       id: copenhagenStopIds.roundTowerExterior,
@@ -190,6 +232,8 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 10,
       note: 'Exterior only; no paid ascent planned.',
+      visitBrief:
+        'See the distinctive 17th-century observatory tower from the street. Notice its rounded brick form and entrance; no ascent is planned.',
     },
     {
       id: copenhagenStopIds.rosenborgKingsGarden,
@@ -201,6 +245,9 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 25,
       note: 'Representative castle exterior and garden-edge point; no museum visit.',
+      visitBrief:
+        'See Rosenborg’s Renaissance castle exterior from the King’s Garden and take a short garden walk. The plan does not include a museum visit.',
+      highlights: ['Turreted castle façade', 'Garden paths and lawns', 'Moat'],
     },
     {
       id: copenhagenStopIds.torvehallerne,
@@ -211,6 +258,9 @@ export const copenhagenTrip: Trip = {
       canSkip: true,
       plannedVisitMinutes: 25,
       note: 'Final sightseeing and shopping point.',
+      visitBrief:
+        'Finish at Copenhagen’s covered market halls. Browse the food stalls, take a short break, and make any planned purchases before leaving for the airport.',
+      highlights: ['Two glass market halls', 'Food and produce stalls'],
       timeConstraint: { type: 'time_window', start: '10:00', end: '19:00' },
     },
   ],

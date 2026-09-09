@@ -375,6 +375,31 @@ void test('map view uses DayPlanItem.order and StopId-derived statuses', () => {
     view.stops.map((stop) => stop.stopId),
     copenhagenTrip.days[0].plan.map((item) => item.stopId),
   );
+  assert.deepEqual(
+    view.stops.map((stop) => stop.itineraryPosition),
+    Array.from({ length: 16 }, (_, index) => index + 1),
+  );
+  assert.deepEqual(
+    view.stops.map((stop) => stop.name),
+    [
+      'Nyhavn',
+      'Amalienborg',
+      "Marmorkirken / Frederik's Church",
+      'Gefion Fountain',
+      'Kastellet',
+      'Little Mermaid',
+      'Refshaleøen / Reffen',
+      'Christianshavn',
+      'Christiania',
+      'Black Diamond',
+      'Christiansborg exterior',
+      'Christiansborg Tower',
+      'Strøget / Old Centre',
+      'Round Tower exterior',
+      "Rosenborg + King's Garden",
+      'Torvehallerne',
+    ],
+  );
   assert.equal(view.stops[0].status, 'current');
   assert.equal(view.stops[1].status, 'next');
   assert.equal(view.stops[2].status, 'completed');

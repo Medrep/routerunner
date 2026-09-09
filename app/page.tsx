@@ -573,20 +573,11 @@ function ExecutionPage() {
       </main>
       <Dialog open={full} onOpenChange={setFull}>
         <DialogContent className="fullscreen-map" showCloseButton={false}>
-          <div className="full-header">
-            <DialogClose className="back-button">
-              <ArrowLeft size={20} />
-              Back to day
-            </DialogClose>
-            <DialogTitle>
-              RouteRunner <span>· {copenhagenTrip.title}</span>
-            </DialogTitle>
-            <span className="full-deadline">
-              Hard stop <b>{day.hardEndTime}</b>
-            </span>
-          </div>
+          <DialogTitle className="sr-only">
+            {copenhagenTrip.title} itinerary map
+          </DialogTitle>
           <DialogDescription className="sr-only">
-            Full geographic route map. Closing returns to the unchanged
+            Full geographic itinerary map. Closing returns to the unchanged
             execution state.
           </DialogDescription>
           <div className="full-map-body">
@@ -597,24 +588,10 @@ function ExecutionPage() {
               full
             />
           </div>
-          <div className="full-bottom">
-            <div>
-              <p className="eyebrow">
-                {current ? 'NOW' : started ? 'NO CURRENT' : 'FIRST STOP'}
-              </p>
-              <strong>{displayedStop?.name ?? 'No Current remains'}</strong>
-              {nextStop && (
-                <span>
-                  <ArrowRight size={15} />
-                  {nextStop.name}
-                </span>
-              )}
-            </div>
-            <DialogClose className="primary">
-              Back to day
-              <ArrowRight size={18} />
-            </DialogClose>
-          </div>
+          <DialogClose className="full-map-back">
+            <ArrowLeft size={20} />
+            Back to day
+          </DialogClose>
         </DialogContent>
       </Dialog>
       <Sheet

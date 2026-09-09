@@ -2,35 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { Map as MapboxMap, Marker } from 'mapbox-gl';
-import type {
-  ForegroundLocationState,
-  RouteMapLegView,
-  RouteMapView,
-  StopId,
-} from '@/domain';
+import type { ForegroundLocationState, RouteMapView, StopId } from '@/domain';
 import { mapboxTokenState } from '@/domain';
-
-const ROUTE_SOURCE_ID = 'routerunner-prepared-legs';
-const ROUTE_LAYER_IDS = [
-  'routerunner-walk-legs',
-  'routerunner-transit-legs',
-  'routerunner-ferry-legs',
-] as const;
-
-function routeGeoJson(legs: RouteMapLegView[]) {
-  return {
-    type: 'FeatureCollection',
-    features: legs.map((leg) => ({
-      type: 'Feature',
-      properties: {
-        legId: leg.legId,
-        mode: leg.mode,
-        representation: leg.representation,
-      },
-      geometry: { type: 'LineString', coordinates: leg.coordinates },
-    })),
-  };
-}
 
 function removeMarkers(markers: Map<string, Marker>): void {
   for (const marker of markers.values()) marker.remove();
@@ -81,28 +54,16 @@ export default function RouteMap({
     const mapbox = moduleRef.current;
     if (!mapbox || !map.isStyleLoaded()) return;
 
-    const routeSource = map.getSource(ROUTE_SOURCE_ID);
-    if (routeSource?.type === 'geojson') {
-      routeSource.setData(routeGeoJson(viewRef.current.legs));
-    }
-
     removeMarkers(stopMarkersRef.current);
     for (const stop of viewRef.current.stops) {
       const markerButton = document.createElement('button');
       markerButton.type = 'button';
       markerButton.className = `mapbox-stop-marker ${stop.status} ${stop.priority}`;
       markerButton.dataset.label = stop.name;
-      markerButton.textContent =
-        stop.status === 'completed'
-          ? '✓'
-          : stop.status === 'skipped'
-            ? '−'
-            : stop.status === 'saved'
-              ? '◇'
-              : String(stop.order);
+      markerButton.textContent = String(stop.itineraryPosition);
       markerButton.setAttribute(
         'aria-label',
-        `${stop.order}. ${stop.name}, ${stop.status}, ${stop.priority}`,
+        `${stop.itineraryPosition}. ${stop.name}, ${stop.status}, ${stop.priority}`,
       );
       markerButton.title = stop.name;
       markerButton.addEventListener('click', () =>
@@ -149,6 +110,8 @@ export default function RouteMap({
     }
 
     let cancelled = false;
+    let resizeObserver: ResizeObserver | undefined;
+    let resizeFrame: number | undefined;
     const stopMarkers = stopMarkersRef.current;
     void import('mapbox-gl')
       .then((mapbox) => {
@@ -166,45 +129,14 @@ export default function RouteMap({
           attributionControl: true,
         });
         mapRef.current = map;
+        if (typeof ResizeObserver !== 'undefined') {
+          resizeObserver = new ResizeObserver(() => map.resize());
+          resizeObserver.observe(containerRef.current);
+        }
+        resizeFrame = window.requestAnimationFrame(() => map.resize());
         if (full) map.addControl(new mapbox.default.NavigationControl());
         map.on('load', () => {
-          map.addSource(ROUTE_SOURCE_ID, {
-            type: 'geojson',
-            data: routeGeoJson(viewRef.current.legs),
-          });
-          const routeLayers = [
-            {
-              id: ROUTE_LAYER_IDS[0],
-              mode: 'walk',
-              color: '#176b50',
-              dash: [1, 2],
-            },
-            {
-              id: ROUTE_LAYER_IDS[1],
-              mode: 'transit',
-              color: '#596f67',
-              dash: [4, 2],
-            },
-            {
-              id: ROUTE_LAYER_IDS[2],
-              mode: 'ferry',
-              color: '#327895',
-              dash: [2, 2],
-            },
-          ] as const;
-          for (const layer of routeLayers) {
-            map.addLayer({
-              id: layer.id,
-              type: 'line',
-              source: ROUTE_SOURCE_ID,
-              filter: ['==', ['get', 'mode'], layer.mode],
-              paint: {
-                'line-color': layer.color,
-                'line-width': 3,
-                'line-dasharray': [...layer.dash],
-              },
-            });
-          }
+          map.resize();
           updateOverlays(map);
           if (viewRef.current.stops.length > 1) {
             const bounds = new mapbox.default.LngLatBounds();
@@ -222,6 +154,8 @@ export default function RouteMap({
 
     return () => {
       cancelled = true;
+      resizeObserver?.disconnect();
+      if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame);
       removeMarkers(stopMarkers);
       userMarkerRef.current?.remove();
       userMarkerRef.current = null;
@@ -266,13 +200,7 @@ export default function RouteMap({
       </div>
       <output className="map-caption">
         <span>{locationCaption(location)}</span>
-        <span>
-          {view.routePresentation === 'schematic-endpoints'
-            ? 'Prepared schematic connections · not live routing'
-            : view.routePresentation === 'prepared-geometry'
-              ? 'Prepared route geometry · not live routing'
-              : 'Prepared route geometry unavailable'}
-        </span>
+        <span>Itinerary stop overview · not turn-by-turn routing</span>
         {runtimeError && <span>{runtimeError}</span>}
       </output>
     </div>

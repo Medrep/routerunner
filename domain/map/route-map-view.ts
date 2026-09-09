@@ -19,7 +19,7 @@ export interface RouteMapStopView {
   name: string;
   latitude: number;
   longitude: number;
-  order: number;
+  itineraryPosition: number;
   priority: StopPriority;
   canSkip: boolean;
   status: RouteMapStopStatus;
@@ -70,7 +70,7 @@ export function deriveRouteMapView(
   const nextStopId = nextEligiblePendingStopId(trip, execution);
   const stopById = new Map(trip.stops.map((stop) => [stop.id, stop]));
   const orderedPlan = orderedDayPlan(day);
-  const stops = orderedPlan.flatMap<RouteMapStopView>((item) => {
+  const stops = orderedPlan.flatMap<RouteMapStopView>((item, index) => {
     const stop = stopById.get(item.stopId);
     const stopExecution = execution.stopExecutions[item.stopId];
     if (!stop || !stopExecution) return [];
@@ -93,7 +93,7 @@ export function deriveRouteMapView(
         name: stop.name,
         latitude: stop.latitude,
         longitude: stop.longitude,
-        order: item.order,
+        itineraryPosition: index + 1,
         priority: stop.priority,
         canSkip: stop.canSkip,
         status,

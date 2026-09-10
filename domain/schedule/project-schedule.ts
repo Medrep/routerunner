@@ -1,4 +1,8 @@
 import type { TripExecutionState } from '../execution/types.ts';
+import {
+  isTripComplete,
+  tripExecutionLifecycle,
+} from '../execution/lifecycle.ts';
 import type {
   Stop,
   StopId,
@@ -53,7 +57,11 @@ export type ScheduleProjectionUnavailableReason =
 export type ScheduleProjection =
   | {
       status: 'inactive';
-      reason: 'not_started' | 'no_remaining_work';
+      reason:
+        | 'not_started'
+        | 'no_remaining_work'
+        | 'day_complete'
+        | 'trip_complete';
       projectedStopIds: readonly StopId[];
     }
   | {
@@ -318,8 +326,22 @@ export function projectSchedule(
       constraintAlerts: [],
     };
   }
+  if (isTripComplete(trip, state)) {
+    return {
+      status: 'inactive',
+      reason: 'trip_complete',
+      projectedStopIds: [],
+    };
+  }
   if (!state.executionDayId) {
-    return { status: 'inactive', reason: 'not_started', projectedStopIds: [] };
+    return {
+      status: 'inactive',
+      reason:
+        tripExecutionLifecycle(trip, state).status === 'DAY_COMPLETE'
+          ? 'day_complete'
+          : 'not_started',
+      projectedStopIds: [],
+    };
   }
 
   const day = trip.days.find(

@@ -8,7 +8,12 @@ import type {
   ExecutionStorage,
   PersistExecutionTransitionResult,
 } from '../execution/persistence.ts';
-import type { TravelMode, Trip } from '../trip/types.ts';
+import type {
+  PostDayDestination,
+  PostDayNavigationTarget,
+  TravelMode,
+  Trip,
+} from '../trip/types.ts';
 import type { TripExecutionState } from '../execution/types.ts';
 
 export type GoogleMapsTravelMode = 'walking' | 'transit';
@@ -46,6 +51,27 @@ export function buildGoogleMapsNavigationUrl(
         .join('|'),
     );
   }
+  return url.toString();
+}
+
+function googleMapsDestinationValue(target: PostDayNavigationTarget): string {
+  return 'address' in target
+    ? target.address
+    : `${target.latitude},${target.longitude}`;
+}
+
+/** Builds the static post-day CTA without creating a Stop, Leg, or execution. */
+export function postDayGoogleMapsNavigationUrl(
+  destination: PostDayDestination,
+): string {
+  const url = new URL('https://www.google.com/maps/dir/');
+  url.searchParams.set('api', '1');
+  url.searchParams.set(
+    'destination',
+    googleMapsDestinationValue(destination.navigationTarget),
+  );
+  const travelMode = googleMapsTravelMode(destination.mode);
+  if (travelMode) url.searchParams.set('travelmode', travelMode);
   return url.toString();
 }
 

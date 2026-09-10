@@ -244,7 +244,7 @@ void test('rejects unknown, mismatched, completed, and concurrently active day s
     startedAt,
   );
   assert.equal(completed.ok, false);
-  assert.equal(completed.error.code, 'DAY_ALREADY_COMPLETED');
+  assert.equal(completed.error.code, 'TRIP_COMPLETE');
 
   const tripWithAnotherDay = {
     ...copenhagenTrip,

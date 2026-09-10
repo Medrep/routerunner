@@ -3,6 +3,7 @@ import {
   activeExecutionRecommendation,
   projectSchedule,
 } from '../schedule/project-schedule.ts';
+import { isTripComplete } from './lifecycle.ts';
 import type { StopExecution, TripExecutionState } from './types.ts';
 
 export type TransitionErrorCode =
@@ -10,7 +11,11 @@ export type TransitionErrorCode =
   | 'DAY_NOT_FOUND'
   | 'EXECUTION_DAY_ALREADY_ACTIVE'
   | 'DAY_ALREADY_COMPLETED'
+  | 'DAY_NOT_COMPLETED'
   | 'EXECUTION_DAY_NOT_ACTIVE'
+  | 'EXECUTABLE_WORK_REMAINS'
+  | 'DO_NOW_QUEUE_NOT_EMPTY'
+  | 'TRIP_COMPLETE'
   | 'CURRENT_NOT_FOUND'
   | 'CURRENT_STOP_NOT_FOUND'
   | 'CURRENT_EXECUTION_NOT_FOUND'
@@ -55,6 +60,15 @@ function tripMatchesState(
       'TRIP_STATE_MISMATCH',
       `Execution state belongs to trip ${state.tripId}, not ${trip.id}.`,
     );
+  }
+}
+
+function terminalFailure(
+  trip: Trip,
+  state: TripExecutionState,
+): TransitionFailure | undefined {
+  if (isTripComplete(trip, state)) {
+    return fail('TRIP_COMPLETE', 'Trip execution is complete.');
   }
 }
 
@@ -118,6 +132,8 @@ function currentContext(
 ): CurrentContext | TransitionFailure {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return terminal;
 
   if (!state.executionDayId) {
     return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
@@ -196,6 +212,8 @@ export function startDay(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return terminal;
 
   const day = trip.days.find((candidate) => candidate.id === dayId);
   if (!day) return fail('DAY_NOT_FOUND', `Day ${dayId} does not exist.`);
@@ -227,6 +245,97 @@ export function startDay(
             duration: { status: 'unknown', reason: 'unresolved' },
           }
         : undefined,
+      lastUpdatedAt: now,
+    },
+  };
+}
+
+/**
+ * Explicitly completes the active lifecycle day. Pending work scheduled to the
+ * day and queued Do Now work must be resolved by their own transitions first.
+ */
+export function endDay(
+  trip: Trip,
+  state: TripExecutionState,
+  now: string,
+): TransitionResult {
+  const mismatch = tripMatchesState(trip, state);
+  if (mismatch) return mismatch;
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return terminal;
+  if (!state.executionDayId) {
+    return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
+  }
+
+  const dayId = state.executionDayId;
+  if (!trip.days.some((day) => day.id === dayId)) {
+    return fail(
+      'DAY_NOT_FOUND',
+      `Active execution day ${dayId} does not exist.`,
+    );
+  }
+  if (state.completedDayIds.includes(dayId)) {
+    return fail('DAY_ALREADY_COMPLETED', `Day ${dayId} is already completed.`);
+  }
+  if (state.doNowQueue.length > 0) {
+    return fail(
+      'DO_NOW_QUEUE_NOT_EMPTY',
+      'Queued Do Now work must be resolved before ending the day.',
+    );
+  }
+  if (
+    state.currentStopId !== undefined ||
+    Object.values(state.stopExecutions).some(
+      (execution) =>
+        execution.status === 'pending' && execution.scheduledDayId === dayId,
+    )
+  ) {
+    return fail(
+      'EXECUTABLE_WORK_REMAINS',
+      'Executable work remains for the active day.',
+    );
+  }
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      executionDayId: undefined,
+      executionDayStartedAt: undefined,
+      currentStopId: undefined,
+      currentStepStartedAt: undefined,
+      currentInboundTravel: undefined,
+      completedDayIds: [...new Set([...state.completedDayIds, dayId])],
+      lastUpdatedAt: now,
+    },
+  };
+}
+
+/** Reopens only day lifecycle; Stop execution and scheduling remain unchanged. */
+export function reopenCompletedDay(
+  trip: Trip,
+  state: TripExecutionState,
+  dayId: string,
+  now: string,
+): TransitionResult {
+  const mismatch = tripMatchesState(trip, state);
+  if (mismatch) return mismatch;
+  if (!trip.days.some((day) => day.id === dayId)) {
+    return fail('DAY_NOT_FOUND', `Day ${dayId} does not exist.`);
+  }
+  if (!state.completedDayIds.includes(dayId)) {
+    return fail('DAY_NOT_COMPLETED', `Day ${dayId} is not completed.`);
+  }
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return terminal;
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      completedDayIds: state.completedDayIds.filter(
+        (completedDayId) => completedDayId !== dayId,
+      ),
       lastUpdatedAt: now,
     },
   };
@@ -323,6 +432,8 @@ function skipFutureTarget(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return terminal;
   if (!state.executionDayId) {
     return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
   }
@@ -363,6 +474,8 @@ export function acceptSkipRecommendation(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return terminal;
   if (!state.executionDayId) {
     return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
   }
@@ -399,6 +512,8 @@ export function acknowledgeRuleRecommendation(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return terminal;
   if (!state.executionDayId) {
     return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
   }

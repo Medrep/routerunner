@@ -93,13 +93,13 @@ function activeState() {
   );
 }
 
-function roundTrip(state: TripExecutionState) {
+function roundTrip(state: TripExecutionState, trip: Trip = copenhagenTrip) {
   const storage = new FakeStorage();
   assert.deepEqual(
-    saveExecutionState(copenhagenTrip, state, state.lastUpdatedAt, storage),
+    saveExecutionState(trip, state, state.lastUpdatedAt, storage),
     { status: 'saved', savedAt: state.lastUpdatedAt },
   );
-  const loaded = loadExecutionState(copenhagenTrip, storage);
+  const loaded = loadExecutionState(trip, storage);
   assert.equal(loaded.status, 'restored');
   assert.deepEqual(loaded.state, state);
   return { storage, loaded };
@@ -248,6 +248,14 @@ void test('preserves an active day with no Current and does not complete it', ()
 });
 
 void test('preserves populated future-contract arrays without adding behavior', () => {
+  const trip: Trip = {
+    ...copenhagenTrip,
+    endDate: '2026-09-09',
+    days: [
+      ...copenhagenTrip.days,
+      { id: 'copenhagen-day-2', date: '2026-09-09', plan: [] },
+    ],
+  };
   const state: TripExecutionState = {
     ...activeState(),
     doNowQueue: [
@@ -256,7 +264,7 @@ void test('preserves populated future-contract arrays without adding behavior', 
         returnScheduledDayId: dayId,
       },
     ],
-    completedDayIds: [dayId],
+    completedDayIds: ['copenhagen-day-2'],
     ruleAcknowledgements: [
       {
         ruleId: 'copenhagen-reffen-buffer-below-30',
@@ -266,7 +274,7 @@ void test('preserves populated future-contract arrays without adding behavior', 
       },
     ],
   };
-  const { loaded } = roundTrip(state);
+  const { loaded } = roundTrip(state, trip);
 
   assert.deepEqual(loaded.state.doNowQueue, state.doNowQueue);
   assert.deepEqual(loaded.state.completedDayIds, state.completedDayIds);

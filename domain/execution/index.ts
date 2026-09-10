@@ -1,4 +1,6 @@
 export { createInitialTripExecutionState } from './create-execution-state.ts';
+export { isTripComplete, tripExecutionLifecycle } from './lifecycle.ts';
+export type { TripExecutionLifecycle } from './lifecycle.ts';
 export {
   clearExecutionState,
   deserializeExecutionState,
@@ -13,9 +15,11 @@ export {
   acceptSkipRecommendation,
   acknowledgeRuleRecommendation,
   completeCurrentStop,
+  endDay,
   firstEligiblePendingStopId,
   nextEligiblePendingStopId,
   orderedDayPlan,
+  reopenCompletedDay,
   saveCurrentForLater,
   skipCurrentStop,
   startDay,

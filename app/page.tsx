@@ -67,15 +67,18 @@ import {
   completeCurrentStop,
   currentGoogleMapsNavigationUrl,
   deriveRouteMapView,
+  endDay,
   nextEligiblePendingStopId,
   orderedDayPlan,
   persistExecutionTransition,
+  postDayGoogleMapsNavigationUrl,
   projectSchedule,
   restoreOrCreateExecutionState,
   saveCurrentForLater as saveCurrentForLaterTransition,
   saveExecutionState,
   startDayAndBuildNavigation,
   shouldRefreshScheduleProjection,
+  tripExecutionLifecycle,
   type RouteMapStopStatus,
   type Stop,
   type StopId,
@@ -145,20 +148,29 @@ function ScheduleSummary({
   timeZone: string;
 }) {
   if (projection.status === 'inactive') {
+    const completeLabel =
+      projection.reason === 'trip_complete'
+        ? 'Trip complete'
+        : projection.reason === 'day_complete'
+          ? 'Day complete'
+          : undefined;
     return (
       <div className="schedule">
         <strong>
           <i />
-          {projection.reason === 'not_started'
-            ? 'Ready to start'
-            : 'No remaining work'}
+          {completeLabel ??
+            (projection.reason === 'not_started'
+              ? 'Ready to start'
+              : 'No remaining work')}
         </strong>
         <span>
-          {projection.reason === 'not_started'
-            ? 'Projection begins when the first stop becomes Current'
-            : hardEndTime
-              ? `Sightseeing ends ${hardEndTime}`
-              : 'Active route is clear'}
+          {completeLabel
+            ? 'Active schedule closed'
+            : projection.reason === 'not_started'
+              ? 'Projection begins when the first stop becomes Current'
+              : hardEndTime
+                ? `Sightseeing ends ${hardEndTime}`
+                : 'Active route is clear'}
         </span>
       </div>
     );
@@ -259,6 +271,7 @@ function ExecutionPage() {
   const selectedTripOption = selectableTrips.find(
     ({ trip: optionTrip }) => optionTrip.id === trip.id,
   )!;
+  const lifecycle = tripExecutionLifecycle(trip, execution);
   const refreshProjectionClock = shouldRefreshScheduleProjection(execution);
 
   useEffect(() => {
@@ -278,7 +291,19 @@ function ExecutionPage() {
     return () => window.clearInterval(timer);
   }, [refreshProjectionClock]);
 
-  const started = execution.executionDayId !== undefined;
+  const started = lifecycle.status === 'ACTIVE';
+  const lifecycleComplete =
+    lifecycle.status === 'DAY_COMPLETE' || lifecycle.status === 'TRIP_COMPLETE';
+  const lifecycleDay =
+    lifecycle.status === 'READY'
+      ? undefined
+      : trip.days.find((candidate) => candidate.id === lifecycle.dayId);
+  const postDayDestination = lifecycleComplete
+    ? lifecycleDay?.postDayDestination
+    : undefined;
+  const postDayNavigationUrl = postDayDestination
+    ? postDayGoogleMapsNavigationUrl(postDayDestination)
+    : undefined;
   const location = useForegroundLocation(started);
   const current =
     trip.stops.find((stop) => stop.id === execution.currentStopId) ?? null;
@@ -286,7 +311,8 @@ function ExecutionPage() {
   const firstPreparedStop = trip.stops.find(
     (stop) => stop.id === firstPreparedStopId,
   );
-  const displayedStop = current ?? (!started ? firstPreparedStop : undefined);
+  const displayedStop =
+    current ?? (lifecycle.status === 'READY' ? firstPreparedStop : undefined);
   const displayedPlanItem = plannedStopPresentation(
     dayPlanModel,
     displayedStop?.id,
@@ -294,7 +320,9 @@ function ExecutionPage() {
   const detailsCta = displayedStop ? stopDetailsCtaModel(displayedStop) : null;
   const nextStopId = started
     ? nextEligiblePendingStopId(trip, execution)
-    : orderedPlan[1]?.stopId;
+    : lifecycle.status === 'READY'
+      ? orderedPlan[1]?.stopId
+      : undefined;
   const nextStop = trip.stops.find((stop) => stop.id === nextStopId) ?? null;
   const nextPlanItem = plannedStopPresentation(dayPlanModel, nextStopId);
   const detailStop = trip.stops.find((stop) => stop.id === detail) ?? null;
@@ -451,6 +479,14 @@ function ExecutionPage() {
     setDetail(null);
   }
 
+  function endActiveDay() {
+    apply(endDay(trip, execution, new Date().toISOString()), (state) =>
+      tripExecutionLifecycle(trip, state).status === 'TRIP_COMPLETE'
+        ? 'Trip complete.'
+        : 'Day complete.',
+    );
+  }
+
   function keepRecommendation() {
     if (!recommendation) return;
     const now = new Date().toISOString();
@@ -602,23 +638,92 @@ function ExecutionPage() {
             <section className="execution" aria-label="Current step">
               <div className="execution-top">
                 <span className="active-label">
-                  {current ? 'NOW' : started ? 'NO CURRENT' : 'FIRST STOP'}
+                  {current
+                    ? 'NOW'
+                    : lifecycle.status === 'TRIP_COMPLETE'
+                      ? 'TRIP COMPLETE'
+                      : lifecycle.status === 'DAY_COMPLETE'
+                        ? 'DAY COMPLETE'
+                        : started
+                          ? 'NO CURRENT'
+                          : 'FIRST STOP'}
                 </span>
                 <span className="current-time">
                   <Clock size={14} />
-                  {started ? 'Day active' : 'Not started'}
+                  {started
+                    ? 'Day active'
+                    : lifecycleComplete
+                      ? 'Execution ended'
+                      : 'Not started'}
                 </span>
               </div>
-              {noAvailableCurrent ? (
+              {lifecycleComplete ? (
+                <div className="finished">
+                  <div className="finish-check">
+                    <Check size={28} />
+                  </div>
+                  <h2>
+                    {lifecycle.status === 'TRIP_COMPLETE'
+                      ? 'Trip complete'
+                      : 'Day complete'}
+                  </h2>
+                  <p>
+                    {lifecycle.status === 'TRIP_COMPLETE'
+                      ? 'Sightseeing execution is complete. A good day, well spent.'
+                      : 'This day is complete. The trip still has prepared days ahead.'}
+                  </p>
+                  {postDayDestination && (
+                    <div className="airport-callout">
+                      <Plane size={22} aria-hidden="true" />
+                      <div>
+                        <strong>After sightseeing</strong>
+                        <span>{postDayDestination.name}</span>
+                        {postDayDestination.targetArrivalTime && (
+                          <small>
+                            Target arrival{' '}
+                            <time
+                              dateTime={postDayDestination.targetArrivalTime}
+                            >
+                              {postDayDestination.targetArrivalTime}
+                            </time>
+                          </small>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {postDayNavigationUrl && (
+                    <div className="actions">
+                      <a className="primary" href={postDayNavigationUrl}>
+                        <Navigation size={20} /> Directions to{' '}
+                        {postDayDestination?.name}
+                      </a>
+                    </div>
+                  )}
+                </div>
+              ) : noAvailableCurrent ? (
                 <div className="finished">
                   <div className="finish-check">
                     <Check size={28} />
                   </div>
                   <h2>No Current remains</h2>
                   <p>
-                    Available work is exhausted. The day remains active until a
-                    later slice adds explicit End Day behavior.
+                    Available work is exhausted. End the day explicitly when you
+                    are ready.
                   </p>
+                  <div className="actions">
+                    <button
+                      className="primary"
+                      onClick={endActiveDay}
+                      disabled={execution.doNowQueue.length > 0}
+                    >
+                      <Flag size={20} /> End Day
+                    </button>
+                  </div>
+                  {execution.doNowQueue.length > 0 && (
+                    <p className="action-context">
+                      Resolve queued Do Now work before ending the day.
+                    </p>
+                  )}
                 </div>
               ) : displayedStop ? (
                 <>
@@ -733,7 +838,7 @@ function ExecutionPage() {
                   </p>
                 </>
               ) : null}
-              {day.hardEndTime && (
+              {day.hardEndTime && !lifecycleComplete && (
                 <div className="deadline">
                   <span>
                     <Flag size={15} />
@@ -1020,17 +1125,18 @@ function ExecutionPage() {
                 </div>
               )}
               <div className="actions">
-                {!started && detail === firstPreparedStopId && (
-                  <button
-                    className="primary"
-                    onClick={() => {
-                      beginDay();
-                      setDetail(null);
-                    }}
-                  >
-                    <ArrowRight size={20} /> Start day
-                  </button>
-                )}
+                {lifecycle.status === 'READY' &&
+                  detail === firstPreparedStopId && (
+                    <button
+                      className="primary"
+                      onClick={() => {
+                        beginDay();
+                        setDetail(null);
+                      }}
+                    >
+                      <ArrowRight size={20} /> Start day
+                    </button>
+                  )}
                 {started && detail === execution.currentStopId && current && (
                   <>
                     {navigationUrl && (

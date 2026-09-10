@@ -215,6 +215,8 @@ function hasCoherentExecutionStateRelationships(
     );
   }
 
+  if (state.completedDayIds.includes(state.executionDayId)) return false;
+
   if (state.executionDayStartedAt === undefined) return false;
 
   if (state.currentStopId === undefined) {

@@ -1342,6 +1342,16 @@ body {
   color: #5d6f57;
   font-size: 12px;
 }
+.airport-callout small {
+  display: block;
+  margin-top: 4px;
+  color: #5a6b56;
+  font-size: 12px;
+}
+.actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .last-stop {
   display: flex;
   align-items: center;

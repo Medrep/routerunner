@@ -45,6 +45,7 @@ import {
 } from '@/components/routerunner/day-plan-presentation';
 import { stopDetailsCtaModel } from '@/components/routerunner/stop-visit-content';
 import { StopVisitContent } from '@/components/routerunner/stop-visit-content-view';
+import { manualSkipCurrentStop } from '@/components/routerunner/manual-skip';
 import {
   Sheet,
   SheetClose,
@@ -73,7 +74,6 @@ import {
   restoreOrCreateExecutionState,
   saveCurrentForLater as saveCurrentForLaterTransition,
   saveExecutionState,
-  skipCurrentStop,
   startDayAndBuildNavigation,
   shouldRefreshScheduleProjection,
   type RouteMapStopStatus,
@@ -416,17 +416,21 @@ function ExecutionPage() {
   function skip() {
     if (!current) return;
     const skippedName = current.name;
-    apply(
-      skipCurrentStop(trip, execution, new Date().toISOString()),
-      (state) => {
-        const promoted = trip.stops.find(
-          (stop) => stop.id === state.currentStopId,
-        );
-        return promoted
-          ? `${skippedName} skipped. ${promoted.name} is now Current.`
-          : `${skippedName} skipped. No Current remains.`;
-      },
+    const manualSkip = manualSkipCurrentStop(
+      trip,
+      execution,
+      new Date().toISOString(),
+      (message) => window.confirm(message),
     );
+    if (manualSkip.status === 'cancelled') return;
+    apply(manualSkip.result, (state) => {
+      const promoted = trip.stops.find(
+        (stop) => stop.id === state.currentStopId,
+      );
+      return promoted
+        ? `${skippedName} skipped. ${promoted.name} is now Current.`
+        : `${skippedName} skipped. No Current remains.`;
+    });
     setDetail(null);
   }
 

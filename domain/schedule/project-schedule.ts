@@ -19,6 +19,7 @@ export type ScheduleProjectionUnavailableReason =
   | 'current_stop_missing'
   | 'current_inbound_missing'
   | 'current_inbound_unknown'
+  | 'required_leg_ambiguous'
   | 'required_leg_unknown';
 
 export type ScheduleProjection =
@@ -40,6 +41,13 @@ export type ScheduleProjection =
       bufferMinutes?: number;
       health?: ScheduleHealth;
     };
+
+/** The derived projection clock only needs to advance while Current exists. */
+export function shouldRefreshScheduleProjection(
+  state: Pick<TripExecutionState, 'currentStopId'>,
+): boolean {
+  return state.currentStopId !== undefined;
+}
 
 function activeProjectedStops(
   trip: Trip,
@@ -262,10 +270,18 @@ export function projectSchedule(
   for (let index = 1; index < projectedStops.length; index += 1) {
     const previous = projectedStops[index - 1];
     const stop = projectedStops[index];
-    const leg = trip.legs?.find(
+    const matchingLegs = (trip.legs ?? []).filter(
       (candidate) =>
         candidate.fromStopId === previous.id && candidate.toStopId === stop.id,
     );
+    if (matchingLegs.length > 1) {
+      return {
+        status: 'unavailable',
+        reason: 'required_leg_ambiguous',
+        projectedStopIds,
+      };
+    }
+    const leg = matchingLegs[0];
     if (leg?.plannedDurationMinutes === undefined) {
       return {
         status: 'unavailable',

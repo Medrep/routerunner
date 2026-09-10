@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -12,6 +13,7 @@ import {
   loadExecutionState,
   projectSchedule,
   saveExecutionState,
+  shouldRefreshScheduleProjection,
   startDay,
 } from '../index.ts';
 import type {
@@ -137,6 +139,36 @@ function fixtureTrip(): Trip {
   };
 }
 
+function twoStopTrip(legs: NonNullable<Trip['legs']>): Trip {
+  const base = fixtureTrip();
+  return {
+    ...base,
+    stops: base.stops.slice(0, 2),
+    days: [
+      {
+        ...base.days[0],
+        plan: base.days[0].plan.slice(0, 2),
+      },
+    ],
+    legs,
+  };
+}
+
+function directedLeg(
+  id: string,
+  fromStopId: StopId,
+  toStopId: StopId,
+  plannedDurationMinutes?: number,
+): NonNullable<Trip['legs']>[number] {
+  return {
+    id,
+    fromStopId,
+    toStopId,
+    mode: 'walk',
+    ...(plannedDurationMinutes === undefined ? {} : { plannedDurationMinutes }),
+  };
+}
+
 function activeState(
   trip = fixtureTrip(),
   inboundMinutes = 5,
@@ -213,6 +245,105 @@ for (const type of ['fixed_time', 'time_window'] as const) {
     assert.equal(result.estimatedFinishAt, '2026-09-08T11:10:00.000Z');
   });
 }
+
+void test('zero matching future Legs makes projection unavailable', () => {
+  const trip = twoStopTrip([]);
+  const result = projectSchedule(trip, activeState(trip, 0), startedAt);
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.reason, 'required_leg_unknown');
+  assert.equal('health' in result, false);
+});
+
+void test('exactly one matching known future Leg is calculable', () => {
+  const trip = twoStopTrip([directedLeg('a-b', ids.a, ids.b, 5)]);
+  const result = calculable(trip, activeState(trip, 0));
+  assert.equal(result.remainingMinutes, 35);
+  assert.equal(result.estimatedFinishAt, '2026-09-08T10:35:00.000Z');
+});
+
+void test('one matching future Leg with missing duration is unavailable', () => {
+  const trip = twoStopTrip([directedLeg('a-b', ids.a, ids.b)]);
+  const result = projectSchedule(trip, activeState(trip, 0), startedAt);
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.reason, 'required_leg_unknown');
+});
+
+void test('two matching known future Legs are ambiguous and unavailable', () => {
+  const trip = twoStopTrip([
+    directedLeg('a-b-1', ids.a, ids.b, 5),
+    directedLeg('a-b-2', ids.a, ids.b, 5),
+  ]);
+  const result = projectSchedule(trip, activeState(trip, 0), startedAt);
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.reason, 'required_leg_ambiguous');
+  assert.equal('health' in result, false);
+});
+
+void test('two matching future Legs with different durations remain unavailable', () => {
+  const trip = twoStopTrip([
+    directedLeg('a-b-fast', ids.a, ids.b, 5),
+    directedLeg('a-b-slow', ids.a, ids.b, 50),
+  ]);
+  const result = projectSchedule(trip, activeState(trip, 0), startedAt);
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.reason, 'required_leg_ambiguous');
+  assert.equal('health' in result, false);
+});
+
+void test('reversing ambiguous future Legs produces the same unavailable result', () => {
+  const legs = [
+    directedLeg('a-b-fast', ids.a, ids.b, 5),
+    directedLeg('a-b-slow', ids.a, ids.b, 50),
+  ];
+  const forwardTrip = twoStopTrip(legs);
+  const reversedTrip = twoStopTrip([...legs].reverse());
+  assert.deepEqual(
+    projectSchedule(forwardTrip, activeState(forwardTrip, 0), startedAt),
+    projectSchedule(reversedTrip, activeState(reversedTrip, 0), startedAt),
+  );
+});
+
+void test('one matching future Leg resolves normally alongside unrelated Legs', () => {
+  const trip = twoStopTrip([
+    directedLeg('b-a', ids.b, ids.a, 50),
+    directedLeg('a-b', ids.a, ids.b, 5),
+  ]);
+  assert.equal(calculable(trip, activeState(trip, 0)).remainingMinutes, 35);
+});
+
+void test('future Leg matching respects directed endpoints', () => {
+  const reverseOnlyTrip = twoStopTrip([directedLeg('b-a', ids.b, ids.a, 5)]);
+  const result = projectSchedule(
+    reverseOnlyTrip,
+    activeState(reverseOnlyTrip, 0),
+    startedAt,
+  );
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.reason, 'required_leg_unknown');
+});
+
+void test('Current persisted inbound remains authoritative despite duplicate endpoint Legs', () => {
+  const base = fixtureTrip();
+  const trip: Trip = {
+    ...base,
+    stops: [base.stops[0], base.stops[3]],
+    days: [{ ...base.days[0], plan: [base.days[0].plan[0]] }],
+    legs: [
+      directedLeg('d-a-fast', ids.d, ids.a, 1),
+      directedLeg('d-a-slow', ids.d, ids.a, 50),
+    ],
+  };
+  const baseState = activeState(trip, 7);
+  const state: TripExecutionState = {
+    ...baseState,
+    currentInboundTravel: {
+      ...baseState.currentInboundTravel!,
+      fromStopId: ids.d,
+    },
+  };
+  const result = calculable(trip, state);
+  assert.equal(result.remainingMinutes, 17);
+});
 
 for (const type of ['fixed_time', 'time_window'] as const) {
   void test(`includes deterministic future ${type} early-arrival waiting`, () => {
@@ -493,6 +624,34 @@ void test('projection does not mutate Trip or execution state', () => {
   projectSchedule(trip, state, startedAt);
   assert.deepEqual(trip, tripBefore);
   assert.deepEqual(state, stateBefore);
+});
+
+void test('projection clock eligibility follows active Current execution only', () => {
+  const trip = fixtureTrip();
+  const preStart = createInitialTripExecutionState(trip, initializedAt);
+  const active = activeState(trip);
+  const exhausted: TripExecutionState = {
+    ...active,
+    currentStopId: undefined,
+    currentStepStartedAt: undefined,
+    currentInboundTravel: undefined,
+  };
+
+  assert.equal(shouldRefreshScheduleProjection(preStart), false);
+  assert.equal(shouldRefreshScheduleProjection(active), true);
+  assert.equal(shouldRefreshScheduleProjection(exhausted), false);
+});
+
+void test('execution page conditionally owns one projection interval with cleanup', () => {
+  const pageSource = readFileSync(
+    new URL('../../app/page.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.equal(pageSource.match(/window\.setInterval\(/g)?.length, 1);
+  assert.match(
+    pageSource,
+    /if \(!refreshProjectionClock\) return;[\s\S]*?const timer = window\.setInterval\([\s\S]*?setProjectionNow\(new Date\(\)\.toISOString\(\)\)[\s\S]*?return \(\) => window\.clearInterval\(timer\);[\s\S]*?\}, \[refreshProjectionClock\]\);/,
+  );
 });
 
 void test('before Start and exhausted active days return neutral inactive results', () => {

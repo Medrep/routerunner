@@ -72,6 +72,7 @@ import {
   saveExecutionState,
   skipCurrentStop,
   startDayAndBuildNavigation,
+  shouldRefreshScheduleProjection,
   type RouteMapStopStatus,
   type Stop,
   type StopId,
@@ -249,6 +250,7 @@ function ExecutionPage() {
   const selectedTripOption = selectableTrips.find(
     ({ trip: optionTrip }) => optionTrip.id === trip.id,
   )!;
+  const refreshProjectionClock = shouldRefreshScheduleProjection(execution);
 
   useEffect(() => {
     saveExecutionState(
@@ -259,12 +261,13 @@ function ExecutionPage() {
   }, [trip]);
 
   useEffect(() => {
+    if (!refreshProjectionClock) return;
     const timer = window.setInterval(
       () => setProjectionNow(new Date().toISOString()),
       30_000,
     );
     return () => window.clearInterval(timer);
-  }, []);
+  }, [refreshProjectionClock]);
 
   const started = execution.executionDayId !== undefined;
   const location = useForegroundLocation(started);

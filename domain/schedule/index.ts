@@ -1,4 +1,7 @@
-export { projectSchedule } from './project-schedule.ts';
+export {
+  projectSchedule,
+  shouldRefreshScheduleProjection,
+} from './project-schedule.ts';
 export type {
   ScheduleHealth,
   ScheduleProjection,

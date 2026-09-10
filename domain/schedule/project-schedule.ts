@@ -1,6 +1,8 @@
 import { orderedDayPlan } from '../execution/transitions.ts';
 import type { TripExecutionState } from '../execution/types.ts';
+import { originalPlannedDayId } from '../trip/original-planned-day.ts';
 import type {
+  BufferBelowRule,
   Stop,
   StopId,
   TimeConstraint,
@@ -11,6 +13,35 @@ import type {
 const MINUTE_MS = 60_000;
 
 export type ScheduleHealth = 'ON_PLAN' | 'SCHEDULE_TIGHT' | 'DEADLINE_AT_RISK';
+
+export type RecommendationSeverity = Extract<
+  ScheduleHealth,
+  'SCHEDULE_TIGHT' | 'DEADLINE_AT_RISK'
+>;
+
+export type TimeConstraintAlert =
+  | {
+      type: 'fixed_time_late';
+      stopId: StopId;
+      projectedArrivalAt: string;
+      latenessMinutes: number;
+    }
+  | {
+      type: 'time_window_late';
+      stopId: StopId;
+      projectedArrivalAt: string;
+      latenessMinutes: number;
+    };
+
+export interface ActiveExecutionRecommendation {
+  readonly ruleId: string;
+  readonly executionDayId: string;
+  readonly severity: RecommendationSeverity;
+  readonly targetStopId: StopId;
+  readonly thresholdMinutes: number;
+  readonly bufferMinutes: number;
+  readonly message?: string;
+}
 
 export type ScheduleProjectionUnavailableReason =
   | 'trip_state_mismatch'
@@ -40,6 +71,7 @@ export type ScheduleProjection =
       estimatedFinishAt: string;
       bufferMinutes?: number;
       health?: ScheduleHealth;
+      constraintAlerts: readonly TimeConstraintAlert[];
     };
 
 /** The derived projection clock only needs to advance while Current exists. */
@@ -172,6 +204,106 @@ function healthForBuffer(bufferMinutes: number): ScheduleHealth {
   return 'DEADLINE_AT_RISK';
 }
 
+function constraintAlert(
+  stop: Stop,
+  arrivalAt: number,
+  day: TripDay,
+  timeZone: string,
+): TimeConstraintAlert | undefined {
+  const constraint = stop.timeConstraint;
+  if (!constraint) return undefined;
+
+  const boundary =
+    constraint.type === 'fixed_time' ? constraint.start : constraint.end;
+  if (boundary === undefined) return undefined;
+
+  const boundaryAt = localDateTimeTimestamp(day.date, boundary, timeZone);
+  if (arrivalAt <= boundaryAt) return undefined;
+
+  return {
+    type:
+      constraint.type === 'fixed_time' ? 'fixed_time_late' : 'time_window_late',
+    stopId: stop.id,
+    projectedArrivalAt: new Date(arrivalAt).toISOString(),
+    latenessMinutes: (arrivalAt - boundaryAt) / MINUTE_MS,
+  };
+}
+
+function ruleDayId(trip: Trip, rule: BufferBelowRule): string | null {
+  return rule.dayId ?? originalPlannedDayId(trip, rule.action.stopId);
+}
+
+/** Current-state eligibility for the sole supported prepared fallback action. */
+export function isRecommendationTargetEligible(
+  trip: Trip,
+  state: TripExecutionState,
+  stopId: StopId,
+): boolean {
+  const stop = trip.stops.find((candidate) => candidate.id === stopId);
+  const execution = state.stopExecutions[stopId];
+  return Boolean(
+    state.executionDayId &&
+    stop?.canSkip &&
+    execution?.status === 'pending' &&
+    execution.scheduledDayId === state.executionDayId &&
+    state.currentStopId !== stopId &&
+    !state.doNowQueue.some((entry) => entry.stopId === stopId),
+  );
+}
+
+/** Selects the first declared rule that is active; it never invents a fallback. */
+export function activeExecutionRecommendation(
+  trip: Trip,
+  state: TripExecutionState,
+  projection: ScheduleProjection,
+): ActiveExecutionRecommendation | undefined {
+  if (
+    !state.executionDayId ||
+    projection.status !== 'calculable' ||
+    projection.bufferMinutes === undefined ||
+    (projection.health !== 'SCHEDULE_TIGHT' &&
+      projection.health !== 'DEADLINE_AT_RISK')
+  ) {
+    return undefined;
+  }
+
+  const executionDay = trip.days.find((day) => day.id === state.executionDayId);
+  if (!executionDay?.hardEndTime) return undefined;
+
+  for (const rule of trip.rules ?? []) {
+    if (
+      rule.type !== 'buffer_below' ||
+      rule.action.type !== 'recommend_skip' ||
+      ruleDayId(trip, rule) !== state.executionDayId ||
+      projection.bufferMinutes >= rule.thresholdMinutes ||
+      !isRecommendationTargetEligible(trip, state, rule.action.stopId)
+    ) {
+      continue;
+    }
+
+    const acknowledged = state.ruleAcknowledgements.some(
+      (entry) =>
+        entry.ruleId === rule.id &&
+        entry.executionDayId === state.executionDayId &&
+        (entry.severity === projection.health ||
+          entry.severity === 'DEADLINE_AT_RISK'),
+    );
+    if (acknowledged) continue;
+
+    return {
+      ruleId: rule.id,
+      executionDayId: state.executionDayId,
+      severity: projection.health,
+      targetStopId: rule.action.stopId,
+      thresholdMinutes: rule.thresholdMinutes,
+      bufferMinutes: projection.bufferMinutes,
+      ...(rule.message === undefined ? {} : { message: rule.message }),
+    };
+  }
+
+  return undefined;
+}
+
 /**
  * Derives the active execution projection without mutating or persisting it.
  * `now` is supplied by the caller so elapsed-time behavior stays deterministic.
@@ -255,6 +387,14 @@ export function projectSchedule(
   const currentStartedAt = new Date(state.currentStepStartedAt).valueOf();
   const currentInboundMinutes = state.currentInboundTravel.duration.minutes;
   const currentArrivalAt = currentStartedAt + currentInboundMinutes * MINUTE_MS;
+  const constraintAlerts: TimeConstraintAlert[] = [];
+  const currentAlert = constraintAlert(
+    current,
+    currentArrivalAt,
+    day,
+    trip.timeZone,
+  );
+  if (currentAlert) constraintAlerts.push(currentAlert);
   const currentWaitingMinutes = waitingMinutes(
     currentArrivalAt,
     current.timeConstraint,
@@ -291,6 +431,8 @@ export function projectSchedule(
     }
 
     const arrivalAt = cursorAt + leg.plannedDurationMinutes * MINUTE_MS;
+    const alert = constraintAlert(stop, arrivalAt, day, trip.timeZone);
+    if (alert) constraintAlerts.push(alert);
     const wait = waitingMinutes(
       arrivalAt,
       stop.timeConstraint,
@@ -311,6 +453,7 @@ export function projectSchedule(
       projectedStopIds,
       remainingMinutes,
       estimatedFinishAt,
+      constraintAlerts,
     };
   }
 
@@ -322,5 +465,6 @@ export function projectSchedule(
     estimatedFinishAt,
     bufferMinutes,
     health: healthForBuffer(bufferMinutes),
+    constraintAlerts,
   };
 }

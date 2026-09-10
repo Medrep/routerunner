@@ -40,6 +40,7 @@ function validTrip(): Trip {
       {
         id: 'second-day',
         date: '2026-09-07',
+        hardEndTime: '18:00',
         plan: [{ stopId: secondId, order: 0 }],
         postDayDestination: {
           id: airportId,
@@ -346,6 +347,7 @@ for (const order of [NaN, Infinity, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
 
 void test('unique sparse order values define order independently of plan array position', () => {
   const trip = validTrip();
+  delete trip.rules;
   trip.days[0].plan = [
     { stopId: secondId, order: 20 },
     { stopId: firstId, order: 10 },
@@ -384,4 +386,47 @@ void test('duplicate placement error identifies the original reference', () => {
       },
     ],
   });
+});
+
+void test('buffer rules reject unknown day scope and days without hard end', () => {
+  const unknownDay = validTrip();
+  unknownDay.rules![0].dayId = 'missing-day';
+  assert.ok(
+    validateTrip(unknownDay).errors.some(
+      ({ code, path }) =>
+        code === 'UNKNOWN_DAY_ID' && path === 'rules[0].dayId',
+    ),
+  );
+
+  const noDeadline = validTrip();
+  delete noDeadline.days[1].hardEndTime;
+  assert.ok(
+    validateTrip(noDeadline).errors.some(
+      ({ code }) => code === 'RULE_DAY_WITHOUT_HARD_END',
+    ),
+  );
+});
+
+void test('runtime rule validation rejects unsupported rule and action shapes', () => {
+  const unsupportedType = validTrip() as unknown as {
+    rules: Array<Record<string, unknown>>;
+  };
+  unsupportedType.rules[0].type = 'replan';
+  assert.ok(
+    validateTrip(unsupportedType as unknown as Trip).errors.some(
+      ({ code, path }) =>
+        code === 'UNSUPPORTED_RULE' && path === 'rules[0].type',
+    ),
+  );
+
+  const unsupportedAction = validTrip() as unknown as {
+    rules: Array<Record<string, unknown>>;
+  };
+  unsupportedAction.rules[0].action = { type: 'save_for_later' };
+  assert.ok(
+    validateTrip(unsupportedAction as unknown as Trip).errors.some(
+      ({ code, path }) =>
+        code === 'UNSUPPORTED_RULE' && path === 'rules[0].action',
+    ),
+  );
 });

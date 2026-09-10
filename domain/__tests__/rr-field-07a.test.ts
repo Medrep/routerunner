@@ -264,7 +264,7 @@ void test('MIT Details CTA remains explicit and Done still advances to Hala Targ
   assert.equal(state.currentStopId, krakowStopIds.halaTargowa);
 });
 
-void test('execution persistence remains version 1 and excludes static planned times', () => {
+void test('execution persistence version excludes static planned times', () => {
   const storage = new MemoryStorage();
   const state = complete(startedKrakowState(), '2026-09-12T11:10:00.000Z');
   const result = saveExecutionState(
@@ -276,7 +276,7 @@ void test('execution persistence remains version 1 and excludes static planned t
   const serialized = storage.getItem(executionStorageKey(krakowField06Trip.id));
 
   assert.equal(result.status, 'saved');
-  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 1);
+  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 2);
   assert.ok(serialized);
   assert.equal(serialized.includes('plannedStartTime'), false);
   assert.equal(serialized.includes('13:10'), false);

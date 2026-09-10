@@ -8,6 +8,7 @@ import {
   copenhagenTrip,
 } from '../../data/trips/copenhagen.ts';
 import {
+  acknowledgeRuleRecommendation,
   clearExecutionState,
   completeCurrentStop,
   createInitialTripExecutionState,
@@ -140,6 +141,27 @@ void test('persists a versioned, trip-bound envelope with deterministic savedAt'
   assert.deepEqual(envelope.state, state);
 });
 
+void test('migrates version 1 execution progress only when legacy acknowledgements are empty', () => {
+  const state = activeState();
+  const envelope = savedEnvelope(state);
+  envelope.version = 1;
+  assert.deepEqual(
+    deserializeExecutionState(JSON.stringify(envelope), copenhagenTrip),
+    { status: 'restored', state, savedAt: state.lastUpdatedAt },
+  );
+
+  envelope.state.ruleAcknowledgements = [
+    {
+      ruleId: 'copenhagen-reffen-buffer-below-30',
+      acknowledgedAt: changedAt,
+    },
+  ];
+  assert.equal(
+    deserializeExecutionState(JSON.stringify(envelope), copenhagenTrip).status,
+    'invalid',
+  );
+});
+
 void test('round-trips fresh pre-start execution state', () => {
   roundTrip(initialState());
 });
@@ -239,6 +261,8 @@ void test('preserves populated future-contract arrays without adding behavior', 
     ruleAcknowledgements: [
       {
         ruleId: 'copenhagen-reffen-buffer-below-30',
+        executionDayId: dayId,
+        severity: 'SCHEDULE_TIGHT',
         acknowledgedAt: changedAt,
       },
     ],
@@ -251,6 +275,83 @@ void test('preserves populated future-contract arrays without adding behavior', 
     loaded.state.ruleAcknowledgements,
     state.ruleAcknowledgements,
   );
+});
+
+void test('Tight and Risk Keep It acknowledgements survive reload without derived state', () => {
+  const tight = acknowledgeRuleRecommendation(
+    copenhagenTrip,
+    activeState(),
+    'copenhagen-reffen-buffer-below-30',
+    'SCHEDULE_TIGHT',
+    changedAt,
+  );
+  assert.equal(tight.ok, true);
+  const riskAt = '2026-09-08T09:00:00.000Z';
+  const risk = acknowledgeRuleRecommendation(
+    copenhagenTrip,
+    tight.state,
+    'copenhagen-reffen-buffer-below-30',
+    'DEADLINE_AT_RISK',
+    riskAt,
+  );
+  assert.equal(risk.ok, true);
+
+  const { storage, loaded } = roundTrip(risk.state);
+  assert.deepEqual(loaded.state.ruleAcknowledgements, [
+    {
+      ruleId: 'copenhagen-reffen-buffer-below-30',
+      executionDayId: dayId,
+      severity: 'SCHEDULE_TIGHT',
+      acknowledgedAt: changedAt,
+    },
+    {
+      ruleId: 'copenhagen-reffen-buffer-below-30',
+      executionDayId: dayId,
+      severity: 'DEADLINE_AT_RISK',
+      acknowledgedAt: riskAt,
+    },
+  ]);
+  const serialized = storage.getItem(executionStorageKey(copenhagenTrip.id))!;
+  assert.equal(serialized.includes('bufferMinutes'), false);
+  assert.equal(serialized.includes('recommendation'), false);
+  assert.equal(serialized.includes('constraintAlerts'), false);
+});
+
+void test('save rejects unknown acknowledgement IDs, days, and severities', () => {
+  const state = activeState();
+  const invalidAcknowledgements = [
+    {
+      ruleId: 'removed-rule',
+      executionDayId: dayId,
+      severity: 'SCHEDULE_TIGHT',
+      acknowledgedAt: changedAt,
+    },
+    {
+      ruleId: 'copenhagen-reffen-buffer-below-30',
+      executionDayId: 'missing-day',
+      severity: 'SCHEDULE_TIGHT',
+      acknowledgedAt: changedAt,
+    },
+    {
+      ruleId: 'copenhagen-reffen-buffer-below-30',
+      executionDayId: dayId,
+      severity: 'ON_PLAN',
+      acknowledgedAt: changedAt,
+    },
+  ];
+
+  for (const acknowledgement of invalidAcknowledgements) {
+    const result = saveExecutionState(
+      copenhagenTrip,
+      {
+        ...state,
+        ruleAcknowledgements: [acknowledgement],
+      } as unknown as TripExecutionState,
+      changedAt,
+      new FakeStorage(),
+    );
+    assert.equal(result.status, 'invalid');
+  }
 });
 
 void test('rejects malformed JSON', () => {
@@ -269,7 +370,7 @@ void test('rejects incompatible and structurally invalid persisted states', asyn
     {
       name: 'unsupported envelope version',
       mutate: (envelope) => {
-        envelope.version = 2;
+        envelope.version = 99;
       },
     },
     {
@@ -524,6 +625,32 @@ void test('rejects incompatible and structurally invalid persisted states', asyn
       mutate: (envelope) => {
         envelope.state.ruleAcknowledgements = [
           { ruleId: 'removed-rule', acknowledgedAt: changedAt },
+        ];
+      },
+    },
+    {
+      name: 'unknown acknowledgement day',
+      mutate: (envelope) => {
+        envelope.state.ruleAcknowledgements = [
+          {
+            ruleId: 'copenhagen-reffen-buffer-below-30',
+            executionDayId: 'missing-day',
+            severity: 'SCHEDULE_TIGHT',
+            acknowledgedAt: changedAt,
+          },
+        ];
+      },
+    },
+    {
+      name: 'unknown acknowledgement severity',
+      mutate: (envelope) => {
+        envelope.state.ruleAcknowledgements = [
+          {
+            ruleId: 'copenhagen-reffen-buffer-below-30',
+            executionDayId: dayId,
+            severity: 'ON_PLAN',
+            acknowledgedAt: changedAt,
+          },
         ];
       },
     },

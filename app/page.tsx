@@ -60,6 +60,8 @@ import {
 } from '@/data/trips';
 import { useForegroundLocation } from '@/hooks/use-foreground-location';
 import {
+  acknowledgeRuleRecommendation,
+  activeExecutionRecommendation,
   completeCurrentStop,
   currentGoogleMapsNavigationUrl,
   deriveRouteMapView,
@@ -71,6 +73,7 @@ import {
   saveCurrentForLater as saveCurrentForLaterTransition,
   saveExecutionState,
   skipCurrentStop,
+  skipRecommendationTarget,
   startDayAndBuildNavigation,
   shouldRefreshScheduleProjection,
   type RouteMapStopStatus,
@@ -116,6 +119,12 @@ function formatRemainingDuration(minutes: number) {
   if (hours === 0) return `${remainder} min remaining`;
   if (remainder === 0) return `${hours} h remaining`;
   return `${hours} h ${remainder} min remaining`;
+}
+
+function formatBufferAmount(minutes: number) {
+  return minutes >= 0
+    ? `${Math.floor(minutes)} min buffer`
+    : `${Math.ceil(Math.abs(minutes))} min over`;
 }
 
 function scheduleClassName(projection: ScheduleProjection) {
@@ -298,6 +307,18 @@ function ExecutionPage() {
     () => projectSchedule(trip, execution, projectionNow),
     [execution, projectionNow, trip],
   );
+  const recommendation = useMemo(
+    () => activeExecutionRecommendation(trip, execution, scheduleProjection),
+    [execution, scheduleProjection, trip],
+  );
+  const recommendationStop = recommendation
+    ? (trip.stops.find((stop) => stop.id === recommendation.targetStopId) ??
+      null)
+    : null;
+  const constraintAlerts =
+    scheduleProjection.status === 'calculable'
+      ? scheduleProjection.constraintAlerts
+      : [];
 
   function planNumber(stopId: StopId): number | undefined {
     const index = orderedPlan.findIndex((item) => item.stopId === stopId);
@@ -424,6 +445,83 @@ function ExecutionPage() {
       },
     );
     setDetail(null);
+  }
+
+  function keepRecommendation() {
+    if (!recommendation) return;
+    const now = new Date().toISOString();
+    const currentRecommendation = activeExecutionRecommendation(
+      trip,
+      execution,
+      projectSchedule(trip, execution, now),
+    );
+    if (currentRecommendation?.ruleId !== recommendation.ruleId) {
+      setProjectionNow(now);
+      setFeedback('That recommendation is no longer active.');
+      return;
+    }
+    apply(
+      acknowledgeRuleRecommendation(
+        trip,
+        execution,
+        currentRecommendation.ruleId,
+        currentRecommendation.severity,
+        now,
+      ),
+      () =>
+        `${recommendationStop?.shortName ?? recommendationStop?.name ?? 'Stop'} kept.`,
+    );
+  }
+
+  function acceptRecommendation() {
+    if (!recommendation || !recommendationStop) return;
+    if (
+      recommendationStop.priority === 'must' &&
+      !window.confirm(`Skip must-see stop ${recommendationStop.name}?`)
+    ) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const before = projectSchedule(trip, execution, now);
+    const currentRecommendation = activeExecutionRecommendation(
+      trip,
+      execution,
+      before,
+    );
+    if (currentRecommendation?.ruleId !== recommendation.ruleId) {
+      setProjectionNow(now);
+      setFeedback('That recommendation is no longer active.');
+      return;
+    }
+
+    const result = skipRecommendationTarget(
+      trip,
+      execution,
+      currentRecommendation.targetStopId,
+      now,
+    );
+    const persisted = persistExecutionTransition(trip, execution, result);
+    if (persisted.status === 'rejected') {
+      setFeedback(persisted.error.message);
+      return;
+    }
+
+    const after = projectSchedule(trip, persisted.state, now);
+    const recoveredMinutes =
+      before.status === 'calculable' &&
+      after.status === 'calculable' &&
+      before.bufferMinutes !== undefined &&
+      after.bufferMinutes !== undefined
+        ? after.bufferMinutes - before.bufferMinutes
+        : undefined;
+    setExecution(persisted.state);
+    setProjectionNow(now);
+    setFeedback(
+      recoveredMinutes !== undefined && recoveredMinutes > 0
+        ? `${recommendationStop.shortName ?? recommendationStop.name} skipped · +${Math.floor(recoveredMinutes)} min buffer`
+        : `${recommendationStop.shortName ?? recommendationStop.name} skipped`,
+    );
   }
 
   function preparedLeg(
@@ -666,6 +764,62 @@ function ExecutionPage() {
                 </div>
               )}
             </section>
+            {recommendation && recommendationStop && day.hardEndTime && (
+              <section
+                className="recommendation"
+                aria-label="Schedule recommendation"
+              >
+                <strong className="recommendation-title">
+                  <span className="optional-diamond" aria-hidden="true">
+                    ◇
+                  </span>
+                  {recommendation.severity === 'DEADLINE_AT_RISK'
+                    ? 'Deadline at risk'
+                    : 'Schedule tight'}
+                </strong>
+                <p>
+                  <strong>
+                    {formatBufferAmount(recommendation.bufferMinutes)}
+                  </strong>
+                  <br />
+                  {recommendation.message ??
+                    `Skip ${recommendationStop.shortName ?? recommendationStop.name}, the prepared fallback for this schedule.`}
+                  <br />
+                  {recommendation.bufferMinutes >= 0
+                    ? `Only ${Math.floor(recommendation.bufferMinutes)} min remain before the ${day.hardEndTime} hard stop.`
+                    : `Projected finish is ${Math.ceil(Math.abs(recommendation.bufferMinutes))} min past the ${day.hardEndTime} hard stop.`}{' '}
+                  The choice is yours.
+                </p>
+                <div className="recommendation-actions">
+                  <button type="button" onClick={acceptRecommendation}>
+                    Skip{' '}
+                    {recommendationStop.shortName ?? recommendationStop.name}
+                  </button>
+                  <button type="button" onClick={keepRecommendation}>
+                    Keep it
+                  </button>
+                </div>
+                <span>Prepared rule · no automatic change</span>
+              </section>
+            )}
+            {constraintAlerts.map((alert) => {
+              const alertStop = trip.stops.find(
+                (stop) => stop.id === alert.stopId,
+              );
+              if (!alertStop) return null;
+              return (
+                <aside className="risk-note" key={alert.stopId}>
+                  <Clock size={18} aria-hidden="true" />
+                  <p>
+                    <strong>{alertStop.name}</strong>
+                    <br />
+                    {alert.type === 'fixed_time_late'
+                      ? `Projected ${Math.ceil(alert.latenessMinutes)} min late`
+                      : `Projected arrival ${Math.ceil(alert.latenessMinutes)} min after window`}
+                  </p>
+                </aside>
+              );
+            })}
             <output
               className={`feedback ${feedback ? 'has-feedback' : ''}`}
               aria-live="polite"

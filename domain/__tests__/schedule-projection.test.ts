@@ -8,11 +8,14 @@ import {
 } from '../../data/trips/copenhagen.ts';
 import { krakowField06Trip, krakowStopIds } from '../../data/trips/krakow.ts';
 import {
+  acknowledgeRuleRecommendation,
+  activeExecutionRecommendation,
   createInitialTripExecutionState,
   createStopId,
   loadExecutionState,
   projectSchedule,
   saveExecutionState,
+  skipRecommendationTarget,
   shouldRefreshScheduleProjection,
   startDay,
 } from '../index.ts';
@@ -654,6 +657,22 @@ void test('execution page conditionally owns one projection interval with cleanu
   );
 });
 
+void test('execution page presents bounded Skip or Keep It and separate constraint alerts', () => {
+  const pageSource = readFileSync(
+    new URL('../../app/page.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(pageSource, /aria-label="Schedule recommendation"/);
+  assert.match(pageSource, /onClick=\{acceptRecommendation\}/);
+  assert.match(pageSource, /Skip\{' '\}\s*\{recommendationStop\.shortName/);
+  assert.match(pageSource, />\s*Keep it\s*</);
+  assert.match(pageSource, /Prepared rule · no automatic change/);
+  assert.match(
+    pageSource,
+    /Projected arrival \$\{Math\.ceil\(alert\.latenessMinutes\)\} min after window/,
+  );
+});
+
 void test('before Start and exhausted active days return neutral inactive results', () => {
   const trip = fixtureTrip();
   const initial = createInitialTripExecutionState(trip, initializedAt);
@@ -771,3 +790,341 @@ function activeStateForTrip(trip: Trip, inboundMinutes: number) {
     },
   };
 }
+
+function boundedDecisionTrip(hardEndTime = '10:59'): Trip {
+  const base = fixtureTrip();
+  return {
+    ...base,
+    stops: base.stops.slice(0, 2),
+    days: [
+      {
+        ...base.days[0],
+        hardEndTime,
+        plan: base.days[0].plan.slice(0, 2),
+      },
+    ],
+    legs: [directedLeg('a-b', ids.a, ids.b, 0)],
+    rules: [
+      {
+        id: 'skip-b-below-30',
+        type: 'buffer_below',
+        thresholdMinutes: 30,
+        action: { type: 'recommend_skip', stopId: ids.b },
+      },
+    ],
+  };
+}
+
+function boundedDecision(
+  trip: Trip,
+  state: TripExecutionState = activeState(trip, 0),
+) {
+  const projection = projectSchedule(trip, state, startedAt);
+  return {
+    projection,
+    recommendation: activeExecutionRecommendation(trip, state, projection),
+  };
+}
+
+void test('fixed-time projected arrival alerts only after the exact boundary', () => {
+  const base = fixtureTrip();
+  const tripFor = (start: string): Trip => ({
+    ...base,
+    stops: [
+      { ...base.stops[0], timeConstraint: { type: 'fixed_time', start } },
+    ],
+    days: [{ ...base.days[0], plan: [base.days[0].plan[0]] }],
+    legs: [],
+  });
+
+  const late = calculable(tripFor('09:55'), activeState(tripFor('09:55'), 0));
+  assert.deepEqual(late.constraintAlerts, [
+    {
+      type: 'fixed_time_late',
+      stopId: ids.a,
+      projectedArrivalAt: startedAt,
+      latenessMinutes: 5,
+    },
+  ]);
+  assert.deepEqual(
+    calculable(tripFor('10:00'), activeState(tripFor('10:00'), 0))
+      .constraintAlerts,
+    [],
+  );
+  const early = calculable(tripFor('10:05'), activeState(tripFor('10:05'), 0));
+  assert.deepEqual(early.constraintAlerts, []);
+  assert.equal(early.remainingMinutes, 15);
+});
+
+void test('time-window projected arrival alerts only after the inclusive end', () => {
+  const base = twoStopTrip([directedLeg('a-b', ids.a, ids.b, 5)]);
+  const tripFor = (end: string): Trip => ({
+    ...base,
+    stops: base.stops.map((stop) =>
+      stop.id === ids.b
+        ? {
+            ...stop,
+            timeConstraint: { type: 'time_window', start: '09:00', end },
+          }
+        : stop,
+    ),
+  });
+
+  assert.deepEqual(
+    calculable(tripFor('10:14'), activeState(tripFor('10:14'), 0))
+      .constraintAlerts,
+    [
+      {
+        type: 'time_window_late',
+        stopId: ids.b,
+        projectedArrivalAt: '2026-09-08T10:15:00.000Z',
+        latenessMinutes: 1,
+      },
+    ],
+  );
+  assert.deepEqual(
+    calculable(tripFor('10:15'), activeState(tripFor('10:15'), 0))
+      .constraintAlerts,
+    [],
+  );
+});
+
+void test('unknown movement suppresses constraint precision without mutating execution', () => {
+  const base = twoStopTrip([directedLeg('a-b', ids.a, ids.b)]);
+  const trip: Trip = {
+    ...base,
+    stops: base.stops.map((stop) =>
+      stop.id === ids.b
+        ? {
+            ...stop,
+            timeConstraint: {
+              type: 'time_window',
+              start: '09:00',
+              end: '09:01',
+            },
+          }
+        : stop,
+    ),
+  };
+  const state = activeState(trip, 0);
+  const before = structuredClone(state);
+  const result = projectSchedule(trip, state, startedAt);
+  assert.equal(result.status, 'unavailable');
+  assert.equal('constraintAlerts' in result, false);
+  assert.deepEqual(state, before);
+});
+
+void test('constraint alerts remain orthogonal to ON_PLAN schedule health', () => {
+  const base = fixtureTrip();
+  const trip: Trip = {
+    ...base,
+    stops: [
+      {
+        ...base.stops[0],
+        timeConstraint: { type: 'fixed_time', start: '09:59' },
+      },
+    ],
+    days: [
+      {
+        ...base.days[0],
+        hardEndTime: '12:00',
+        plan: [base.days[0].plan[0]],
+      },
+    ],
+    legs: [],
+  };
+  const result = calculable(trip, activeState(trip, 0));
+  assert.equal(result.health, 'ON_PLAN');
+  assert.equal(result.constraintAlerts.length, 1);
+});
+
+void test('buffer rule uses strict threshold and requires calculable deadline projection', () => {
+  const atThirty = boundedDecisionTrip('11:00');
+  assert.equal(boundedDecision(atThirty).recommendation, undefined);
+
+  const atTwentyNine = boundedDecisionTrip('10:59');
+  const active = boundedDecision(atTwentyNine);
+  assert.equal(active.projection.status, 'calculable');
+  assert.equal(active.recommendation?.bufferMinutes, 29);
+  assert.equal(active.recommendation?.severity, 'SCHEDULE_TIGHT');
+  assert.equal(active.recommendation?.targetStopId, ids.b);
+
+  const unavailableTrip = {
+    ...atTwentyNine,
+    legs: [directedLeg('a-b', ids.a, ids.b)],
+  };
+  assert.equal(
+    boundedDecision(unavailableTrip).projection.status,
+    'unavailable',
+  );
+  assert.equal(boundedDecision(unavailableTrip).recommendation, undefined);
+
+  const noDeadline = {
+    ...atTwentyNine,
+    days: [{ ...atTwentyNine.days[0], hardEndTime: undefined }],
+  };
+  assert.equal(boundedDecision(noDeadline).recommendation, undefined);
+});
+
+void test('recommendation target eligibility rejects every unavailable target state', () => {
+  const trip = boundedDecisionTrip();
+  const base = activeState(trip, 0);
+  const projection = projectSchedule(trip, base, startedAt);
+  assert.ok(activeExecutionRecommendation(trip, base, projection));
+
+  const ineligibleStates: TripExecutionState[] = [
+    {
+      ...base,
+      stopExecutions: {
+        ...base.stopExecutions,
+        [ids.b]: completed(base, ids.b),
+      },
+    },
+    {
+      ...base,
+      stopExecutions: {
+        ...base.stopExecutions,
+        [ids.b]: { ...base.stopExecutions[ids.b], status: 'skipped' },
+      },
+    },
+    {
+      ...base,
+      stopExecutions: {
+        ...base.stopExecutions,
+        [ids.b]: { ...base.stopExecutions[ids.b], scheduledDayId: null },
+      },
+    },
+    { ...base, currentStopId: ids.b },
+    {
+      ...base,
+      doNowQueue: [{ stopId: ids.b, returnScheduledDayId: dayId }],
+    },
+  ];
+  for (const state of ineligibleStates) {
+    assert.equal(
+      activeExecutionRecommendation(trip, state, projection),
+      undefined,
+    );
+  }
+
+  const cannotSkip: Trip = {
+    ...trip,
+    stops: trip.stops.map((stop) =>
+      stop.id === ids.b ? { ...stop, canSkip: false } : stop,
+    ),
+  };
+  assert.equal(
+    activeExecutionRecommendation(cannotSkip, base, projection),
+    undefined,
+  );
+});
+
+void test('Keep It suppresses Tight oscillation but permits one later Risk prompt', () => {
+  const tightTrip = boundedDecisionTrip();
+  const state = activeState(tightTrip, 0);
+  const tight = boundedDecision(tightTrip, state).recommendation!;
+  const keptTight = acknowledgeRuleRecommendation(
+    tightTrip,
+    state,
+    tight.ruleId,
+    tight.severity,
+    '2026-09-08T10:01:00.000Z',
+  );
+  assert.equal(keptTight.ok, true);
+  assert.equal(
+    boundedDecision(tightTrip, keptTight.state).recommendation,
+    undefined,
+  );
+
+  const onPlanProjection = projectSchedule(
+    boundedDecisionTrip('11:01'),
+    keptTight.state,
+    startedAt,
+  );
+  assert.equal(onPlanProjection.status, 'calculable');
+  assert.equal(onPlanProjection.health, 'ON_PLAN');
+  assert.equal(
+    activeExecutionRecommendation(tightTrip, keptTight.state, onPlanProjection),
+    undefined,
+  );
+  assert.equal(
+    boundedDecision(tightTrip, keptTight.state).recommendation,
+    undefined,
+  );
+
+  const riskTrip = boundedDecisionTrip('10:29');
+  const risk = boundedDecision(riskTrip, keptTight.state).recommendation;
+  assert.equal(risk?.severity, 'DEADLINE_AT_RISK');
+  const keptRisk = acknowledgeRuleRecommendation(
+    riskTrip,
+    keptTight.state,
+    risk!.ruleId,
+    risk!.severity,
+    '2026-09-08T10:02:00.000Z',
+  );
+  assert.equal(keptRisk.ok, true);
+  assert.equal(
+    boundedDecision(riskTrip, keptRisk.state).recommendation,
+    undefined,
+  );
+  assert.equal(
+    boundedDecision(tightTrip, keptRisk.state).recommendation,
+    undefined,
+  );
+});
+
+void test('acknowledgement scope is execution-day specific', () => {
+  const trip = boundedDecisionTrip();
+  const state = activeState(trip, 0);
+  const otherDayAcknowledgement: TripExecutionState = {
+    ...state,
+    ruleAcknowledgements: [
+      {
+        ruleId: 'skip-b-below-30',
+        executionDayId: 'another-day',
+        severity: 'DEADLINE_AT_RISK',
+        acknowledgedAt: initializedAt,
+      },
+    ],
+  };
+  assert.ok(boundedDecision(trip, otherDayAcknowledgement).recommendation);
+});
+
+void test('recommendation Skip is canonical, explicit, and recalculated', () => {
+  const trip = boundedDecisionTrip();
+  const state = activeState(trip, 0);
+  assert.equal(state.stopExecutions[ids.b].status, 'pending');
+  assert.ok(boundedDecision(trip, state).recommendation);
+
+  const skipped = skipRecommendationTarget(trip, state, ids.b, startedAt);
+  assert.equal(skipped.ok, true);
+  assert.equal(skipped.state.stopExecutions[ids.b].status, 'skipped');
+  assert.equal(skipped.state.currentStopId, ids.a);
+  assert.equal(boundedDecision(trip, skipped.state).recommendation, undefined);
+  assert.equal(
+    skipRecommendationTarget(trip, skipped.state, ids.b, startedAt).ok,
+    false,
+  );
+});
+
+void test('Copenhagen frozen Reffen rule activates only from supplied calculable severity', () => {
+  const rulesBefore = structuredClone(copenhagenTrip.rules);
+  const state = activeStateForTrip(copenhagenTrip, 0);
+  const projection = {
+    status: 'calculable' as const,
+    projectedStopIds: [state.currentStopId!, copenhagenStopIds.reffen],
+    remainingMinutes: 1,
+    estimatedFinishAt: startedAt,
+    bufferMinutes: 29,
+    health: 'SCHEDULE_TIGHT' as const,
+    constraintAlerts: [],
+  };
+  const recommendation = activeExecutionRecommendation(
+    copenhagenTrip,
+    state,
+    projection,
+  );
+  assert.equal(recommendation?.ruleId, 'copenhagen-reffen-buffer-below-30');
+  assert.equal(recommendation?.targetStopId, copenhagenStopIds.reffen);
+  assert.deepEqual(copenhagenTrip.rules, rulesBefore);
+});

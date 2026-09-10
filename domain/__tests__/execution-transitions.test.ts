@@ -25,6 +25,7 @@ function tripWithPlan(plan: DayPlanItem[]): Trip {
   return {
     ...copenhagenTrip,
     days: [{ ...copenhagenTrip.days[0], plan }],
+    rules: copenhagenTrip.rules?.map((rule) => ({ ...rule, dayId })),
   };
 }
 
@@ -410,7 +411,12 @@ void test('core transitions preserve unrelated trip-level execution state', () =
     ],
     completedDayIds: ['historical-day'],
     ruleAcknowledgements: [
-      { ruleId: 'historical-rule', acknowledgedAt: initializedAt },
+      {
+        ruleId: 'historical-rule',
+        executionDayId: dayId,
+        severity: 'SCHEDULE_TIGHT',
+        acknowledgedAt: initializedAt,
+      },
     ],
   };
   const started = startDay(copenhagenTrip, enriched, dayId, startedAt);

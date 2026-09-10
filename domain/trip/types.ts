@@ -135,11 +135,15 @@ export interface Leg {
 export interface BufferBelowRule {
   id: string;
   type: 'buffer_below';
+  /** Optional explicit scope; frozen fixtures may derive it from the target placement. */
+  dayId?: string;
   thresholdMinutes: number;
   action: {
     type: 'recommend_skip';
     stopId: StopId;
   };
+  /** Prepared author copy. RouteRunner never generates replacement advice. */
+  message?: string;
 }
 
 export type ExecutionRule = BufferBelowRule;

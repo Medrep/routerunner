@@ -34,6 +34,8 @@ export interface CurrentInboundTravel {
 
 export interface RuleAcknowledgement {
   ruleId: string;
+  executionDayId: string;
+  severity: 'SCHEDULE_TIGHT' | 'DEADLINE_AT_RISK';
   acknowledgedAt: string;
 }
 

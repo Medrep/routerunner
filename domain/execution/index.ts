@@ -10,11 +10,13 @@ export {
   saveExecutionState,
 } from './persistence.ts';
 export {
+  acknowledgeRuleRecommendation,
   completeCurrentStop,
   firstEligiblePendingStopId,
   nextEligiblePendingStopId,
   orderedDayPlan,
   saveCurrentForLater,
+  skipRecommendationTarget,
   skipCurrentStop,
   startDay,
 } from './transitions.ts';

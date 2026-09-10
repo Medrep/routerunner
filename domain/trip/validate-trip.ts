@@ -6,6 +6,10 @@ export type TripValidationCode =
   | 'DUPLICATE_DAY_ID'
   | 'DUPLICATE_LEG_ID'
   | 'DUPLICATE_RULE_ID'
+  | 'UNSUPPORTED_RULE'
+  | 'UNKNOWN_DAY_ID'
+  | 'RULE_DAY_UNAVAILABLE'
+  | 'RULE_DAY_WITHOUT_HARD_END'
   | 'UNKNOWN_STOP_ID'
   | 'DUPLICATE_PLANNED_STOP'
   | 'DUPLICATE_ORDER'
@@ -40,6 +44,10 @@ export interface TripValidationError {
 export type TripValidationResult =
   | { valid: true; errors: [] }
   | { valid: false; errors: TripValidationError[] };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 function isDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -132,7 +140,7 @@ export function validateTrip(trip: Trip): TripValidationResult {
 
   id(trip.id, 'id');
   const stopIds = uniqueIds(trip.stops, 'stops', 'DUPLICATE_STOP_ID');
-  uniqueIds(trip.days, 'days', 'DUPLICATE_DAY_ID');
+  const dayIds = uniqueIds(trip.days, 'days', 'DUPLICATE_DAY_ID');
   uniqueIds(trip.legs ?? [], 'legs', 'DUPLICATE_LEG_ID');
   uniqueIds(trip.rules ?? [], 'rules', 'DUPLICATE_RULE_ID');
 
@@ -263,6 +271,7 @@ export function validateTrip(trip: Trip): TripValidationResult {
   });
 
   const placements = new Map<string, string>();
+  const placementDayIds = new Map<string, string>();
   let previousDate: string | undefined;
   trip.days.forEach((day, index) => {
     const path = `days[${index}]`;
@@ -305,7 +314,10 @@ export function validateTrip(trip: Trip): TripValidationResult {
           `${itemPath}.stopId`,
           `Stop "${item.stopId}" already has an original placement at ${placement}.`,
         );
-      else placements.set(item.stopId, `${itemPath}.stopId`);
+      else {
+        placements.set(item.stopId, `${itemPath}.stopId`);
+        placementDayIds.set(item.stopId, day.id);
+      }
       if (!Number.isSafeInteger(item.order) || item.order < 0)
         add(
           'INVALID_ORDER',
@@ -373,8 +385,70 @@ export function validateTrip(trip: Trip): TripValidationResult {
     });
   });
   trip.rules?.forEach((rule, index) => {
-    stopReference(rule.action.stopId, `rules[${index}].action.stopId`);
-    number(rule.thresholdMinutes, `rules[${index}].thresholdMinutes`);
+    const path = `rules[${index}]`;
+    if (!isRecord(rule) || rule.type !== 'buffer_below') {
+      add(
+        'UNSUPPORTED_RULE',
+        `${path}.type`,
+        'Only buffer_below execution rules are supported.',
+      );
+      return;
+    }
+    const action = rule.action;
+    if (
+      !isRecord(action) ||
+      action.type !== 'recommend_skip' ||
+      typeof action.stopId !== 'string'
+    ) {
+      add(
+        'UNSUPPORTED_RULE',
+        `${path}.action`,
+        'Only recommend_skip actions with a Stop target are supported.',
+      );
+      return;
+    }
+
+    stopReference(action.stopId, `${path}.action.stopId`);
+    number(rule.thresholdMinutes, `${path}.thresholdMinutes`);
+    if (
+      rule.message !== undefined &&
+      (typeof rule.message !== 'string' ||
+        !rule.message.trim() ||
+        rule.message !== rule.message.trim())
+    ) {
+      add(
+        'UNSUPPORTED_RULE',
+        `${path}.message`,
+        'Prepared rule message must be a non-empty trimmed string.',
+      );
+    }
+
+    const explicitDayId = rule.dayId;
+    if (explicitDayId !== undefined && !dayIds.has(explicitDayId)) {
+      add(
+        'UNKNOWN_DAY_ID',
+        `${path}.dayId`,
+        `Day "${String(explicitDayId)}" is absent from Trip.days.`,
+      );
+      return;
+    }
+    const ruleDayId = explicitDayId ?? placementDayIds.get(action.stopId);
+    if (ruleDayId === undefined) {
+      add(
+        'RULE_DAY_UNAVAILABLE',
+        `${path}.action.stopId`,
+        'A rule without dayId requires a target with an original day placement.',
+      );
+      return;
+    }
+    const ruleDay = trip.days.find((day) => day.id === ruleDayId);
+    if (ruleDay && !ruleDay.hardEndTime) {
+      add(
+        'RULE_DAY_WITHOUT_HARD_END',
+        `${path}${explicitDayId === undefined ? '.action.stopId' : '.dayId'}`,
+        `A buffer_below rule requires hardEndTime on day "${ruleDayId}".`,
+      );
+    }
   });
 
   return errors.length === 0

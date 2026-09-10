@@ -12,7 +12,8 @@ import { createInitialTripExecutionState } from './create-execution-state.ts';
 import { firstEligiblePendingStopId } from './transitions.ts';
 import type { TransitionError, TransitionResult } from './transitions.ts';
 
-export const EXECUTION_STATE_SCHEMA_VERSION = 1;
+export const EXECUTION_STATE_SCHEMA_VERSION = 2;
+const LEGACY_EXECUTION_STATE_SCHEMA_VERSION = 1;
 
 export interface ExecutionStateEnvelope {
   version: typeof EXECUTION_STATE_SCHEMA_VERSION;
@@ -327,18 +328,28 @@ function stateFromUnknown(
   if (!Array.isArray(value.ruleAcknowledgements)) return undefined;
   const ruleIds = new Set((trip.rules ?? []).map((rule) => rule.id));
   const ruleAcknowledgements: RuleAcknowledgement[] = [];
+  const acknowledgementKeys = new Set<string>();
   for (const rawAcknowledgement of value.ruleAcknowledgements) {
     if (
       !isRecord(rawAcknowledgement) ||
       typeof rawAcknowledgement.ruleId !== 'string' ||
       rawAcknowledgement.ruleId.length === 0 ||
       !ruleIds.has(rawAcknowledgement.ruleId) ||
+      typeof rawAcknowledgement.executionDayId !== 'string' ||
+      !dayIds.has(rawAcknowledgement.executionDayId) ||
+      (rawAcknowledgement.severity !== 'SCHEDULE_TIGHT' &&
+        rawAcknowledgement.severity !== 'DEADLINE_AT_RISK') ||
       !isIsoTimestamp(rawAcknowledgement.acknowledgedAt)
     ) {
       return undefined;
     }
+    const key = `${rawAcknowledgement.ruleId}\u0000${rawAcknowledgement.executionDayId}\u0000${rawAcknowledgement.severity}`;
+    if (acknowledgementKeys.has(key)) return undefined;
+    acknowledgementKeys.add(key);
     ruleAcknowledgements.push({
       ruleId: rawAcknowledgement.ruleId,
+      executionDayId: rawAcknowledgement.executionDayId,
+      severity: rawAcknowledgement.severity,
       acknowledgedAt: rawAcknowledgement.acknowledgedAt,
     });
   }
@@ -406,7 +417,10 @@ export function deserializeExecutionState(
       reason: 'Persisted execution envelope is invalid.',
     };
   }
-  if (parsed.version !== EXECUTION_STATE_SCHEMA_VERSION) {
+  if (
+    parsed.version !== EXECUTION_STATE_SCHEMA_VERSION &&
+    parsed.version !== LEGACY_EXECUTION_STATE_SCHEMA_VERSION
+  ) {
     return {
       status: 'invalid',
       reason: 'Persisted execution version is unsupported.',
@@ -423,6 +437,20 @@ export function deserializeExecutionState(
       status: 'invalid',
       reason: 'Persisted execution savedAt is invalid.',
     };
+  }
+
+  if (parsed.version === LEGACY_EXECUTION_STATE_SCHEMA_VERSION) {
+    if (
+      !isRecord(parsed.state) ||
+      !Array.isArray(parsed.state.ruleAcknowledgements) ||
+      parsed.state.ruleAcknowledgements.length > 0
+    ) {
+      return {
+        status: 'invalid',
+        reason:
+          'Legacy rule acknowledgements cannot be migrated without inventing day or severity.',
+      };
+    }
   }
 
   const state = stateFromUnknown(parsed.state, trip);
@@ -470,7 +498,11 @@ export function saveExecutionState(
   savedAt: string,
   storage: ExecutionStorage | undefined = defaultStorage(),
 ): SaveExecutionStateResult {
-  if (state.tripId !== trip.id || !isIsoTimestamp(savedAt)) {
+  if (
+    state.tripId !== trip.id ||
+    !isIsoTimestamp(savedAt) ||
+    stateFromUnknown(state, trip) === undefined
+  ) {
     return {
       status: 'invalid',
       reason: 'Execution state cannot be persisted.',

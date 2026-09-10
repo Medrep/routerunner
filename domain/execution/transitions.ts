@@ -1,4 +1,6 @@
 import type { DayPlanItem, StopId, Trip, TripDay } from '../trip/types.ts';
+import { originalPlannedDayId } from '../trip/original-planned-day.ts';
+import type { RecommendationSeverity } from '../schedule/project-schedule.ts';
 import type { StopExecution, TripExecutionState } from './types.ts';
 
 export type TransitionErrorCode =
@@ -11,7 +13,15 @@ export type TransitionErrorCode =
   | 'CURRENT_STOP_NOT_FOUND'
   | 'CURRENT_EXECUTION_NOT_FOUND'
   | 'CURRENT_NOT_PENDING'
-  | 'STOP_CANNOT_BE_SKIPPED';
+  | 'STOP_CANNOT_BE_SKIPPED'
+  | 'STOP_NOT_FOUND'
+  | 'STOP_NOT_PENDING'
+  | 'STOP_NOT_ACTIVE_DAY'
+  | 'STOP_IS_CURRENT'
+  | 'STOP_QUEUED'
+  | 'RULE_NOT_FOUND'
+  | 'RULE_NOT_ACTIVE_DAY'
+  | 'INVALID_RECOMMENDATION_SEVERITY';
 
 export interface TransitionError {
   code: TransitionErrorCode;
@@ -268,25 +278,133 @@ export function skipCurrentStop(
     return fail('STOP_CANNOT_BE_SKIPPED', `${stop.name} cannot be skipped.`);
   }
 
+  return {
+    ok: true,
+    state: withAdvancedCurrent(
+      trip,
+      withSkippedExecution(state, context.stopId, now),
+      context.stopId,
+      now,
+    ),
+  };
+}
+
+function withSkippedExecution(
+  state: TripExecutionState,
+  stopId: StopId,
+  now: string,
+): TripExecutionState {
   const {
     completedRecordedAt: _completedRecordedAt,
     completedOnDayId: _completedOnDayId,
     ...executionWithoutCompletion
-  } = context.execution;
-  const nextState: TripExecutionState = {
+  } = state.stopExecutions[stopId];
+  return {
     ...state,
     stopExecutions: {
       ...state.stopExecutions,
-      [context.stopId]: {
+      [stopId]: {
         ...executionWithoutCompletion,
         status: 'skipped',
       },
     },
+    lastUpdatedAt: now,
   };
+}
+
+/** Canonical Skip semantics for an eligible non-Current recommendation target. */
+export function skipRecommendationTarget(
+  trip: Trip,
+  state: TripExecutionState,
+  stopId: StopId,
+  now: string,
+): TransitionResult {
+  const mismatch = tripMatchesState(trip, state);
+  if (mismatch) return mismatch;
+  if (!state.executionDayId) {
+    return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
+  }
+  const stop = trip.stops.find((candidate) => candidate.id === stopId);
+  if (!stop) return fail('STOP_NOT_FOUND', `Stop ${stopId} does not exist.`);
+  const execution = state.stopExecutions[stopId];
+  if (execution?.status !== 'pending') {
+    return fail('STOP_NOT_PENDING', `${stop.name} is no longer pending.`);
+  }
+  if (execution.scheduledDayId !== state.executionDayId) {
+    return fail(
+      'STOP_NOT_ACTIVE_DAY',
+      `${stop.name} is not planned for the active execution day.`,
+    );
+  }
+  if (state.currentStopId === stopId) {
+    return fail('STOP_IS_CURRENT', `${stop.name} is Current.`);
+  }
+  if (state.doNowQueue.some((entry) => entry.stopId === stopId)) {
+    return fail('STOP_QUEUED', `${stop.name} is queued for Do Now.`);
+  }
+  if (!stop.canSkip) {
+    return fail('STOP_CANNOT_BE_SKIPPED', `${stop.name} cannot be skipped.`);
+  }
 
   return {
     ok: true,
-    state: withAdvancedCurrent(trip, nextState, context.stopId, now),
+    state: withSkippedExecution(state, stopId, now),
+  };
+}
+
+/** Persists rejection of one prepared recommendation at its current severity. */
+export function acknowledgeRuleRecommendation(
+  trip: Trip,
+  state: TripExecutionState,
+  ruleId: string,
+  severity: RecommendationSeverity,
+  now: string,
+): TransitionResult {
+  const mismatch = tripMatchesState(trip, state);
+  if (mismatch) return mismatch;
+  if (severity !== 'SCHEDULE_TIGHT' && severity !== 'DEADLINE_AT_RISK') {
+    return fail(
+      'INVALID_RECOMMENDATION_SEVERITY',
+      `Severity ${String(severity)} cannot be acknowledged.`,
+    );
+  }
+  if (!state.executionDayId) {
+    return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
+  }
+  const rule = (trip.rules ?? []).find((candidate) => candidate.id === ruleId);
+  if (!rule) return fail('RULE_NOT_FOUND', `Rule ${ruleId} does not exist.`);
+  const ruleDayId =
+    rule.dayId ?? originalPlannedDayId(trip, rule.action.stopId);
+  if (ruleDayId !== state.executionDayId) {
+    return fail(
+      'RULE_NOT_ACTIVE_DAY',
+      `Rule ${ruleId} does not belong to the active execution day.`,
+    );
+  }
+
+  const alreadyAcknowledged = state.ruleAcknowledgements.some(
+    (entry) =>
+      entry.ruleId === ruleId &&
+      entry.executionDayId === state.executionDayId &&
+      entry.severity === severity,
+  );
+  return {
+    ok: true,
+    state: {
+      ...state,
+      ruleAcknowledgements: alreadyAcknowledged
+        ? state.ruleAcknowledgements
+        : [
+            ...state.ruleAcknowledgements,
+            {
+              ruleId,
+              executionDayId: state.executionDayId,
+              severity,
+              acknowledgedAt: now,
+            },
+          ],
+      lastUpdatedAt: now,
+    },
   };
 }
 

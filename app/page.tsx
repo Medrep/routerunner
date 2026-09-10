@@ -31,6 +31,13 @@ import {
   DialogDescription,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import RouteMap from '@/components/routerunner/route-map';
 import { StopVisitContent } from '@/components/routerunner/stop-visit-content-view';
 import {
@@ -40,7 +47,12 @@ import {
   SheetDescription,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { copenhagenStopIds, copenhagenTrip } from '@/data/trips/copenhagen';
+import { copenhagenStopIds } from '@/data/trips/copenhagen';
+import {
+  selectableTrips,
+  selectTripFromSearch,
+  tripSelectionHref,
+} from '@/data/trips';
 import { useForegroundLocation } from '@/hooks/use-foreground-location';
 import {
   completeCurrentStop,
@@ -64,8 +76,6 @@ import {
 
 type PresentationStatus = RouteMapStopStatus;
 
-const day = copenhagenTrip.days[0];
-const orderedPlan = orderedDayPlan(day);
 function Mode({ mode, size = 16 }: { mode: TravelMode; size?: number }) {
   return mode === 'ferry' ? (
     <Ship size={size} />
@@ -110,41 +120,42 @@ export default function Page() {
 }
 
 function ExecutionPage() {
+  const [trip] = useState(() => selectTripFromSearch(window.location.search));
+  const day = trip.days[0];
+  const orderedPlan = orderedDayPlan(day);
   const [execution, setExecution] = useState<TripExecutionState>(
-    () =>
-      restoreOrCreateExecutionState(copenhagenTrip, new Date().toISOString())
-        .state,
+    () => restoreOrCreateExecutionState(trip, new Date().toISOString()).state,
   );
   const [full, setFull] = useState(false);
   const [detail, setDetail] = useState<StopId | null>(null);
   const [feedback, setFeedback] = useState('');
   const initialExecution = useRef(execution);
+  const selectedTripOption = selectableTrips.find(
+    ({ trip: optionTrip }) => optionTrip.id === trip.id,
+  )!;
 
   useEffect(() => {
     saveExecutionState(
-      copenhagenTrip,
+      trip,
       initialExecution.current,
       initialExecution.current.lastUpdatedAt,
     );
-  }, []);
+  }, [trip]);
 
   const started = execution.executionDayId !== undefined;
   const location = useForegroundLocation(started);
   const current =
-    copenhagenTrip.stops.find((stop) => stop.id === execution.currentStopId) ??
-    null;
+    trip.stops.find((stop) => stop.id === execution.currentStopId) ?? null;
   const firstPreparedStopId = orderedPlan[0]?.stopId;
-  const firstPreparedStop = copenhagenTrip.stops.find(
+  const firstPreparedStop = trip.stops.find(
     (stop) => stop.id === firstPreparedStopId,
   );
   const displayedStop = current ?? (!started ? firstPreparedStop : undefined);
   const nextStopId = started
-    ? nextEligiblePendingStopId(copenhagenTrip, execution)
+    ? nextEligiblePendingStopId(trip, execution)
     : orderedPlan[1]?.stopId;
-  const nextStop =
-    copenhagenTrip.stops.find((stop) => stop.id === nextStopId) ?? null;
-  const detailStop =
-    copenhagenTrip.stops.find((stop) => stop.id === detail) ?? null;
+  const nextStop = trip.stops.find((stop) => stop.id === nextStopId) ?? null;
+  const detailStop = trip.stops.find((stop) => stop.id === detail) ?? null;
   const completed = Object.values(execution.stopExecutions).filter(
     (stopExecution) => stopExecution.status === 'completed',
   ).length;
@@ -172,26 +183,19 @@ function ExecutionPage() {
   const mapView = useMemo(
     () =>
       deriveRouteMapView(
-        copenhagenTrip,
+        trip,
         execution,
         location.status === 'available' ? location.coordinates : undefined,
       ),
-    [execution, location],
+    [execution, location, trip],
   );
-  const navigationUrl = currentGoogleMapsNavigationUrl(
-    copenhagenTrip,
-    execution,
-  );
+  const navigationUrl = currentGoogleMapsNavigationUrl(trip, execution);
 
   function apply(
     result: TransitionResult,
     message: (state: TripExecutionState) => string,
   ) {
-    const persisted = persistExecutionTransition(
-      copenhagenTrip,
-      execution,
-      result,
-    );
+    const persisted = persistExecutionTransition(trip, execution, result);
     if (persisted.status === 'rejected') {
       setFeedback(persisted.error.message);
       return;
@@ -202,7 +206,7 @@ function ExecutionPage() {
 
   function beginDayTransition() {
     const result = startDayAndBuildNavigation(
-      copenhagenTrip,
+      trip,
       execution,
       day.id,
       new Date().toISOString(),
@@ -235,9 +239,9 @@ function ExecutionPage() {
     if (!current) return;
     const completedName = current.name;
     apply(
-      completeCurrentStop(copenhagenTrip, execution, new Date().toISOString()),
+      completeCurrentStop(trip, execution, new Date().toISOString()),
       (state) => {
-        const promoted = copenhagenTrip.stops.find(
+        const promoted = trip.stops.find(
           (stop) => stop.id === state.currentStopId,
         );
         return promoted
@@ -252,9 +256,9 @@ function ExecutionPage() {
     if (!current) return;
     const skippedName = current.name;
     apply(
-      skipCurrentStop(copenhagenTrip, execution, new Date().toISOString()),
+      skipCurrentStop(trip, execution, new Date().toISOString()),
       (state) => {
-        const promoted = copenhagenTrip.stops.find(
+        const promoted = trip.stops.find(
           (stop) => stop.id === state.currentStopId,
         );
         return promoted
@@ -269,13 +273,9 @@ function ExecutionPage() {
     if (!current) return;
     const savedName = current.name;
     apply(
-      saveCurrentForLaterTransition(
-        copenhagenTrip,
-        execution,
-        new Date().toISOString(),
-      ),
+      saveCurrentForLaterTransition(trip, execution, new Date().toISOString()),
       (state) => {
-        const promoted = copenhagenTrip.stops.find(
+        const promoted = trip.stops.find(
           (stop) => stop.id === state.currentStopId,
         );
         return promoted
@@ -291,7 +291,7 @@ function ExecutionPage() {
     to: Stop | undefined | null,
   ) {
     if (!from || !to) return undefined;
-    return copenhagenTrip.legs?.find(
+    return trip.legs?.find(
       (candidate) =>
         candidate.fromStopId === from.id && candidate.toStopId === to.id,
     );
@@ -306,7 +306,32 @@ function ExecutionPage() {
           <span>
             PRODUCTION EXECUTION <b>LOCAL</b>
           </span>
-          <span>Schedule projection unavailable</span>
+          <Select
+            value={trip.id}
+            onValueChange={(tripId) => {
+              if (tripId && tripId !== trip.id) {
+                window.location.assign(tripSelectionHref(tripId));
+              }
+            }}
+          >
+            <SelectTrigger
+              className="scenario-select"
+              aria-label="Select private-test trip"
+            >
+              <SelectValue>{selectedTripOption.label}</SelectValue>
+            </SelectTrigger>
+            <SelectContent align="end">
+              {selectableTrips.map(({ label, trip: optionTrip }) => (
+                <SelectItem
+                  key={optionTrip.id}
+                  value={optionTrip.id}
+                  className="scenario-option"
+                >
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <header className="brand">
           <div className="brand-mark">
@@ -316,16 +341,14 @@ function ExecutionPage() {
           <span>YOUR DAY. ONE CLEAR NEXT STEP.</span>
           <div className="day-chip">
             <MapPin size={14} />
-            {copenhagenTrip.city}
+            {trip.city}
           </div>
         </header>
         <section className="trip-heading">
           <div>
-            <p className="eyebrow">
-              ONE DAY · {copenhagenTrip.stops.length} STOPS
-            </p>
+            <p className="eyebrow">ONE DAY · {trip.stops.length} STOPS</p>
             <h1>
-              {copenhagenTrip.title}
+              {trip.title}
               <span className="heading-dot">.</span>
             </h1>
           </div>
@@ -397,8 +420,8 @@ function ExecutionPage() {
                   <StopVisitContent stop={displayedStop} surface="current" />
                   {!started && (
                     <p className="start-intro">
-                      A waterfront morning, a walk through the city, and a
-                      little room to wander.
+                      Follow the prepared stops in order, with room to pause
+                      along the way.
                     </p>
                   )}
                   {nextStop && (
@@ -463,13 +486,15 @@ function ExecutionPage() {
                   </p>
                 </>
               ) : null}
-              <div className="deadline">
-                <span>
-                  <Flag size={15} />
-                  Hard stop <strong>{day.hardEndTime}</strong>
-                </span>
-                <span>Static plan only</span>
-              </div>
+              {day.hardEndTime && (
+                <div className="deadline">
+                  <span>
+                    <Flag size={15} />
+                    Hard stop <strong>{day.hardEndTime}</strong>
+                  </span>
+                  <span>Static plan only</span>
+                </div>
+              )}
             </section>
             <output
               className={`feedback ${feedback ? 'has-feedback' : ''}`}
@@ -481,18 +506,18 @@ function ExecutionPage() {
               <div className="section-heading">
                 <h2>Your day</h2>
                 <span>
-                  {completed} of {copenhagenTrip.stops.length} visited
+                  {completed} of {trip.stops.length} visited
                 </span>
               </div>
               <ol>
                 {orderedPlan.map((item, planIndex) => {
-                  const stop = copenhagenTrip.stops.find(
+                  const stop = trip.stops.find(
                     (candidate) => candidate.id === item.stopId,
                   )!;
                   const status = presentationStatus(stop.id);
                   const previousItem = orderedPlan[planIndex - 1];
                   const previousStop = previousItem
-                    ? copenhagenTrip.stops.find(
+                    ? trip.stops.find(
                         (candidate) => candidate.id === previousItem.stopId,
                       )
                     : undefined;
@@ -557,10 +582,22 @@ function ExecutionPage() {
               <div className="itinerary-end">
                 <Flag size={19} />
                 <div>
-                  <strong>{day.hardEndTime} · Sightseeing ends</strong>
-                  <span>Airport after sightseeing · static plan</span>
+                  <strong>
+                    {day.hardEndTime
+                      ? `${day.hardEndTime} · Sightseeing ends`
+                      : 'Prepared route ends'}
+                  </strong>
+                  <span>
+                    {day.postDayDestination
+                      ? `${day.postDayDestination.name} after sightseeing · static plan`
+                      : `Final stop · ${trip.stops.at(-1)?.name ?? 'Unavailable'}`}
+                  </span>
                 </div>
-                <Plane size={19} />
+                {day.postDayDestination ? (
+                  <Plane size={19} />
+                ) : (
+                  <MapPin size={19} />
+                )}
               </div>
             </section>
           </div>
@@ -576,7 +613,7 @@ function ExecutionPage() {
       <Dialog open={full} onOpenChange={setFull}>
         <DialogContent className="fullscreen-map" showCloseButton={false}>
           <DialogTitle className="sr-only">
-            {copenhagenTrip.title} itinerary map
+            {trip.title} itinerary map
           </DialogTitle>
           <DialogDescription className="sr-only">
             Full geographic itinerary map. Closing returns to the unchanged
@@ -611,9 +648,8 @@ function ExecutionPage() {
             <>
               <div className="sheet-top">
                 <span className="eyebrow">
-                  STOP {planNumber(detailStop.id) ?? '—'} OF{' '}
-                  {copenhagenTrip.stops.length} ·{' '}
-                  {presentationStatus(detailStop.id).toUpperCase()}
+                  STOP {planNumber(detailStop.id) ?? '—'} OF {trip.stops.length}{' '}
+                  · {presentationStatus(detailStop.id).toUpperCase()}
                 </span>
                 <SheetClose
                   className="sheet-close"

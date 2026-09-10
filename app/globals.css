@@ -497,6 +497,18 @@ body {
 .schedule.tight i {
   background: #a37a24;
 }
+.schedule.risk strong {
+  color: #a13b32;
+}
+.schedule.risk i {
+  background: #b7463c;
+}
+.schedule.unavailable strong {
+  color: #596761;
+}
+.schedule.unavailable i {
+  background: #7a8580;
+}
 .workspace {
   grid-template-columns: 1.23fr 1fr;
   gap: 30px;

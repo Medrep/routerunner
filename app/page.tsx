@@ -66,6 +66,7 @@ import {
   nextEligiblePendingStopId,
   orderedDayPlan,
   persistExecutionTransition,
+  projectSchedule,
   restoreOrCreateExecutionState,
   saveCurrentForLater as saveCurrentForLaterTransition,
   saveExecutionState,
@@ -74,6 +75,7 @@ import {
   type RouteMapStopStatus,
   type Stop,
   type StopId,
+  type ScheduleProjection,
   type TransitionResult,
   type TravelMode,
   type TripExecutionState,
@@ -95,6 +97,111 @@ function priorityLabel(stop: Stop) {
   if (stop.priority === 'must') return 'Must-see';
   if (stop.priority === 'optional') return 'Optional';
   return 'Part of your route';
+}
+
+function formatProjectedTime(instant: string, timeZone: string) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(instant));
+}
+
+function formatRemainingDuration(minutes: number) {
+  const rounded = Math.ceil(minutes);
+  const hours = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
+  if (hours === 0) return `${remainder} min remaining`;
+  if (remainder === 0) return `${hours} h remaining`;
+  return `${hours} h ${remainder} min remaining`;
+}
+
+function scheduleClassName(projection: ScheduleProjection) {
+  if (projection.status === 'unavailable') return 'schedule unavailable';
+  if (projection.status !== 'calculable') return 'schedule';
+  if (projection.health === 'SCHEDULE_TIGHT') return 'schedule tight';
+  if (projection.health === 'DEADLINE_AT_RISK') return 'schedule risk';
+  return 'schedule';
+}
+
+function ScheduleSummary({
+  projection,
+  hardEndTime,
+  timeZone,
+}: {
+  projection: ScheduleProjection;
+  hardEndTime?: string;
+  timeZone: string;
+}) {
+  if (projection.status === 'inactive') {
+    return (
+      <div className="schedule">
+        <strong>
+          <i />
+          {projection.reason === 'not_started'
+            ? 'Ready to start'
+            : 'No remaining work'}
+        </strong>
+        <span>
+          {projection.reason === 'not_started'
+            ? 'Projection begins when the first stop becomes Current'
+            : hardEndTime
+              ? `Sightseeing ends ${hardEndTime}`
+              : 'Active route is clear'}
+        </span>
+      </div>
+    );
+  }
+
+  if (projection.status === 'unavailable') {
+    return (
+      <div className="schedule unavailable">
+        <strong>
+          <i />
+          Schedule estimate unavailable
+        </strong>
+        {hardEndTime && <span>Sightseeing ends {hardEndTime}</span>}
+      </div>
+    );
+  }
+
+  const finish = formatProjectedTime(projection.estimatedFinishAt, timeZone);
+  if (!projection.health || projection.bufferMinutes === undefined) {
+    return (
+      <div className="schedule">
+        <strong>
+          <i />
+          Estimated finish {finish}
+        </strong>
+        <span>{formatRemainingDuration(projection.remainingMinutes)}</span>
+      </div>
+    );
+  }
+
+  const healthLabel =
+    projection.health === 'ON_PLAN'
+      ? 'On plan'
+      : projection.health === 'SCHEDULE_TIGHT'
+        ? 'Schedule tight'
+        : 'Deadline at risk';
+  const bufferLabel =
+    projection.bufferMinutes >= 0
+      ? `${Math.floor(projection.bufferMinutes)} min buffer`
+      : `${Math.ceil(Math.abs(projection.bufferMinutes))} min over`;
+
+  return (
+    <div className={scheduleClassName(projection)}>
+      <strong>
+        <i />
+        {healthLabel}
+      </strong>
+      <span>Estimated finish {finish}</span>
+      <span>
+        {bufferLabel} · Sightseeing ends {hardEndTime}
+      </span>
+    </div>
+  );
 }
 
 const subscribeToHydration = () => () => {};
@@ -132,6 +239,9 @@ function ExecutionPage() {
   const [execution, setExecution] = useState<TripExecutionState>(
     () => restoreOrCreateExecutionState(trip, new Date().toISOString()).state,
   );
+  const [projectionNow, setProjectionNow] = useState(() =>
+    new Date().toISOString(),
+  );
   const [full, setFull] = useState(false);
   const [detail, setDetail] = useState<StopId | null>(null);
   const [feedback, setFeedback] = useState('');
@@ -147,6 +257,14 @@ function ExecutionPage() {
       initialExecution.current.lastUpdatedAt,
     );
   }, [trip]);
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setProjectionNow(new Date().toISOString()),
+      30_000,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
 
   const started = execution.executionDayId !== undefined;
   const location = useForegroundLocation(started);
@@ -173,6 +291,10 @@ function ExecutionPage() {
     (stopExecution) => stopExecution.status === 'completed',
   ).length;
   const noAvailableCurrent = started && current === null;
+  const scheduleProjection = useMemo(
+    () => projectSchedule(trip, execution, projectionNow),
+    [execution, projectionNow, trip],
+  );
 
   function planNumber(stopId: StopId): number | undefined {
     const index = orderedPlan.findIndex((item) => item.stopId === stopId);
@@ -214,6 +336,7 @@ function ExecutionPage() {
       return;
     }
     setExecution(persisted.state);
+    setProjectionNow(persisted.state.lastUpdatedAt);
     setFeedback(message(persisted.state));
   }
 
@@ -229,6 +352,7 @@ function ExecutionPage() {
       return result;
     }
     setExecution(result.result.state);
+    setProjectionNow(result.result.state.lastUpdatedAt);
     setFeedback(
       result.result.persistence.status === 'saved'
         ? `${firstPreparedStop?.name ?? 'The first stop'} is now Current.`
@@ -365,13 +489,11 @@ function ExecutionPage() {
               <span className="heading-dot">.</span>
             </h1>
           </div>
-          <div className="schedule">
-            <strong>
-              <i />
-              Schedule unavailable
-            </strong>
-            <span>Live projection comes in a later slice</span>
-          </div>
+          <ScheduleSummary
+            projection={scheduleProjection}
+            hardEndTime={day.hardEndTime}
+            timeZone={trip.timeZone}
+          />
         </section>
         <div className="workspace">
           <div className="map-column">
@@ -531,7 +653,13 @@ function ExecutionPage() {
                     <Flag size={15} />
                     Hard stop <strong>{day.hardEndTime}</strong>
                   </span>
-                  <span>Static plan only</span>
+                  <span>
+                    {scheduleProjection.status === 'calculable'
+                      ? `Estimated finish ${formatProjectedTime(scheduleProjection.estimatedFinishAt, trip.timeZone)}`
+                      : scheduleProjection.status === 'unavailable'
+                        ? 'Schedule estimate unavailable'
+                        : 'Projection begins after Start Day'}
+                  </span>
                 </div>
               )}
             </section>

@@ -150,7 +150,7 @@ void test('sparse numeric orders execute canonically without requiring contiguou
     { ...nyhavn, order: 10 },
     { ...amalienborg, order: 30 },
   ];
-  const trip = tripWithPlan(sparsePhysicalPlan);
+  const trip = { ...tripWithPlan(sparsePhysicalPlan), rules: undefined };
   const physicalOrderBefore = snapshot(trip.days[0].plan);
   assert.deepEqual(validateTrip(trip), { valid: true, errors: [] });
 

@@ -1,6 +1,8 @@
 import type { DayPlanItem, StopId, Trip, TripDay } from '../trip/types.ts';
-import { originalPlannedDayId } from '../trip/original-planned-day.ts';
-import type { RecommendationSeverity } from '../schedule/project-schedule.ts';
+import {
+  activeExecutionRecommendation,
+  projectSchedule,
+} from '../schedule/project-schedule.ts';
 import type { StopExecution, TripExecutionState } from './types.ts';
 
 export type TransitionErrorCode =
@@ -21,7 +23,7 @@ export type TransitionErrorCode =
   | 'STOP_QUEUED'
   | 'RULE_NOT_FOUND'
   | 'RULE_NOT_ACTIVE_DAY'
-  | 'INVALID_RECOMMENDATION_SEVERITY';
+  | 'RECOMMENDATION_NOT_ACTIVE';
 
 export interface TransitionError {
   code: TransitionErrorCode;
@@ -312,8 +314,8 @@ function withSkippedExecution(
   };
 }
 
-/** Canonical Skip semantics for an eligible non-Current recommendation target. */
-export function skipRecommendationTarget(
+/** Canonical Skip mutation for an eligible non-Current recommendation target. */
+function skipFutureTarget(
   trip: Trip,
   state: TripExecutionState,
   stopId: StopId,
@@ -352,33 +354,72 @@ export function skipRecommendationTarget(
   };
 }
 
-/** Persists rejection of one prepared recommendation at its current severity. */
-export function acknowledgeRuleRecommendation(
+/** Accepts Skip only for the currently active, re-derived prepared rule. */
+export function acceptSkipRecommendation(
   trip: Trip,
   state: TripExecutionState,
   ruleId: string,
-  severity: RecommendationSeverity,
   now: string,
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
-  if (severity !== 'SCHEDULE_TIGHT' && severity !== 'DEADLINE_AT_RISK') {
-    return fail(
-      'INVALID_RECOMMENDATION_SEVERITY',
-      `Severity ${String(severity)} cannot be acknowledged.`,
-    );
-  }
   if (!state.executionDayId) {
     return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
   }
   const rule = (trip.rules ?? []).find((candidate) => candidate.id === ruleId);
   if (!rule) return fail('RULE_NOT_FOUND', `Rule ${ruleId} does not exist.`);
-  const ruleDayId =
-    rule.dayId ?? originalPlannedDayId(trip, rule.action.stopId);
-  if (ruleDayId !== state.executionDayId) {
+  if (rule.dayId !== state.executionDayId) {
     return fail(
       'RULE_NOT_ACTIVE_DAY',
       `Rule ${ruleId} does not belong to the active execution day.`,
+    );
+  }
+
+  const recommendation = activeExecutionRecommendation(
+    trip,
+    state,
+    projectSchedule(trip, state, now),
+  );
+  if (recommendation?.ruleId !== ruleId) {
+    return fail(
+      'RECOMMENDATION_NOT_ACTIVE',
+      `Rule ${ruleId} is not an active recommendation.`,
+    );
+  }
+
+  return skipFutureTarget(trip, state, recommendation.targetStopId, now);
+}
+
+/** Persists Keep It only for the currently active, re-derived prepared rule. */
+export function acknowledgeRuleRecommendation(
+  trip: Trip,
+  state: TripExecutionState,
+  ruleId: string,
+  now: string,
+): TransitionResult {
+  const mismatch = tripMatchesState(trip, state);
+  if (mismatch) return mismatch;
+  if (!state.executionDayId) {
+    return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
+  }
+  const rule = (trip.rules ?? []).find((candidate) => candidate.id === ruleId);
+  if (!rule) return fail('RULE_NOT_FOUND', `Rule ${ruleId} does not exist.`);
+  if (rule.dayId !== state.executionDayId) {
+    return fail(
+      'RULE_NOT_ACTIVE_DAY',
+      `Rule ${ruleId} does not belong to the active execution day.`,
+    );
+  }
+
+  const recommendation = activeExecutionRecommendation(
+    trip,
+    state,
+    projectSchedule(trip, state, now),
+  );
+  if (recommendation?.ruleId !== ruleId) {
+    return fail(
+      'RECOMMENDATION_NOT_ACTIVE',
+      `Rule ${ruleId} is not an active recommendation.`,
     );
   }
 
@@ -386,7 +427,7 @@ export function acknowledgeRuleRecommendation(
     (entry) =>
       entry.ruleId === ruleId &&
       entry.executionDayId === state.executionDayId &&
-      entry.severity === severity,
+      entry.severity === recommendation.severity,
   );
   return {
     ok: true,
@@ -399,7 +440,7 @@ export function acknowledgeRuleRecommendation(
             {
               ruleId,
               executionDayId: state.executionDayId,
-              severity,
+              severity: recommendation.severity,
               acknowledgedAt: now,
             },
           ],

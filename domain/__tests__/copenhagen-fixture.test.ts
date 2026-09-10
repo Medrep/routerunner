@@ -175,6 +175,7 @@ void test('Reffen has the sole data-only recommendation at buffer below 30', () 
     {
       id: 'copenhagen-reffen-buffer-below-30',
       type: 'buffer_below',
+      dayId: 'copenhagen-day-1',
       thresholdMinutes: 30,
       action: { type: 'recommend_skip', stopId: copenhagenStopIds.reffen },
     },

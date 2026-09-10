@@ -1,8 +1,5 @@
-import { orderedDayPlan } from '../execution/transitions.ts';
 import type { TripExecutionState } from '../execution/types.ts';
-import { originalPlannedDayId } from '../trip/original-planned-day.ts';
 import type {
-  BufferBelowRule,
   Stop,
   StopId,
   TimeConstraint,
@@ -63,6 +60,8 @@ export type ScheduleProjection =
       status: 'unavailable';
       reason: ScheduleProjectionUnavailableReason;
       projectedStopIds: readonly StopId[];
+      /** Only alerts established before projection knowledge became incomplete. */
+      constraintAlerts: readonly TimeConstraintAlert[];
     }
   | {
       status: 'calculable';
@@ -106,7 +105,9 @@ function activeProjectedStops(
 
   for (const entry of state.doNowQueue) addPending(entry.stopId);
 
-  const orderedPlan = orderedDayPlan(day);
+  const orderedPlan = [...day.plan].sort(
+    (left, right) => left.order - right.order,
+  );
   const currentPlanIndex = orderedPlan.findIndex(
     (item) => item.stopId === state.currentStopId,
   );
@@ -229,10 +230,6 @@ function constraintAlert(
   };
 }
 
-function ruleDayId(trip: Trip, rule: BufferBelowRule): string | null {
-  return rule.dayId ?? originalPlannedDayId(trip, rule.action.stopId);
-}
-
 /** Current-state eligibility for the sole supported prepared fallback action. */
 export function isRecommendationTargetEligible(
   trip: Trip,
@@ -274,7 +271,7 @@ export function activeExecutionRecommendation(
     if (
       rule.type !== 'buffer_below' ||
       rule.action.type !== 'recommend_skip' ||
-      ruleDayId(trip, rule) !== state.executionDayId ||
+      rule.dayId !== state.executionDayId ||
       projection.bufferMinutes >= rule.thresholdMinutes ||
       !isRecommendationTargetEligible(trip, state, rule.action.stopId)
     ) {
@@ -318,6 +315,7 @@ export function projectSchedule(
       status: 'unavailable',
       reason: 'trip_state_mismatch',
       projectedStopIds: [],
+      constraintAlerts: [],
     };
   }
   if (!state.executionDayId) {
@@ -332,6 +330,7 @@ export function projectSchedule(
       status: 'unavailable',
       reason: 'execution_day_missing',
       projectedStopIds: [],
+      constraintAlerts: [],
     };
   }
 
@@ -351,6 +350,7 @@ export function projectSchedule(
       status: 'unavailable',
       reason: 'current_stop_missing',
       projectedStopIds: [],
+      constraintAlerts: [],
     };
   }
 
@@ -361,6 +361,7 @@ export function projectSchedule(
       status: 'unavailable',
       reason: 'current_step_anchor_missing',
       projectedStopIds,
+      constraintAlerts: [],
     };
   }
 
@@ -373,6 +374,7 @@ export function projectSchedule(
       status: 'unavailable',
       reason: 'current_inbound_missing',
       projectedStopIds,
+      constraintAlerts: [],
     };
   }
   if (state.currentInboundTravel.duration.status === 'unknown') {
@@ -380,6 +382,7 @@ export function projectSchedule(
       status: 'unavailable',
       reason: 'current_inbound_unknown',
       projectedStopIds,
+      constraintAlerts: [],
     };
   }
 
@@ -419,6 +422,7 @@ export function projectSchedule(
         status: 'unavailable',
         reason: 'required_leg_ambiguous',
         projectedStopIds,
+        constraintAlerts,
       };
     }
     const leg = matchingLegs[0];
@@ -427,6 +431,7 @@ export function projectSchedule(
         status: 'unavailable',
         reason: 'required_leg_unknown',
         projectedStopIds,
+        constraintAlerts,
       };
     }
 

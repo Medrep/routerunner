@@ -406,6 +406,7 @@ export const copenhagenTrip: Trip = {
     {
       id: 'copenhagen-reffen-buffer-below-30',
       type: 'buffer_below',
+      dayId: 'copenhagen-day-1',
       thresholdMinutes: 30,
       action: { type: 'recommend_skip', stopId: copenhagenStopIds.reffen },
     },

@@ -60,6 +60,7 @@ import {
 } from '@/data/trips';
 import { useForegroundLocation } from '@/hooks/use-foreground-location';
 import {
+  acceptSkipRecommendation,
   acknowledgeRuleRecommendation,
   activeExecutionRecommendation,
   completeCurrentStop,
@@ -73,7 +74,6 @@ import {
   saveCurrentForLater as saveCurrentForLaterTransition,
   saveExecutionState,
   skipCurrentStop,
-  skipRecommendationTarget,
   startDayAndBuildNavigation,
   shouldRefreshScheduleProjection,
   type RouteMapStopStatus,
@@ -316,9 +316,9 @@ function ExecutionPage() {
       null)
     : null;
   const constraintAlerts =
-    scheduleProjection.status === 'calculable'
-      ? scheduleProjection.constraintAlerts
-      : [];
+    scheduleProjection.status === 'inactive'
+      ? []
+      : scheduleProjection.constraintAlerts;
 
   function planNumber(stopId: StopId): number | undefined {
     const index = orderedPlan.findIndex((item) => item.stopId === stopId);
@@ -450,24 +450,15 @@ function ExecutionPage() {
   function keepRecommendation() {
     if (!recommendation) return;
     const now = new Date().toISOString();
-    const currentRecommendation = activeExecutionRecommendation(
+    const result = acknowledgeRuleRecommendation(
       trip,
       execution,
-      projectSchedule(trip, execution, now),
+      recommendation.ruleId,
+      now,
     );
-    if (currentRecommendation?.ruleId !== recommendation.ruleId) {
-      setProjectionNow(now);
-      setFeedback('That recommendation is no longer active.');
-      return;
-    }
+    if (!result.ok) setProjectionNow(now);
     apply(
-      acknowledgeRuleRecommendation(
-        trip,
-        execution,
-        currentRecommendation.ruleId,
-        currentRecommendation.severity,
-        now,
-      ),
+      result,
       () =>
         `${recommendationStop?.shortName ?? recommendationStop?.name ?? 'Stop'} kept.`,
     );
@@ -484,25 +475,15 @@ function ExecutionPage() {
 
     const now = new Date().toISOString();
     const before = projectSchedule(trip, execution, now);
-    const currentRecommendation = activeExecutionRecommendation(
+    const result = acceptSkipRecommendation(
       trip,
       execution,
-      before,
-    );
-    if (currentRecommendation?.ruleId !== recommendation.ruleId) {
-      setProjectionNow(now);
-      setFeedback('That recommendation is no longer active.');
-      return;
-    }
-
-    const result = skipRecommendationTarget(
-      trip,
-      execution,
-      currentRecommendation.targetStopId,
+      recommendation.ruleId,
       now,
     );
     const persisted = persistExecutionTransition(trip, execution, result);
     if (persisted.status === 'rejected') {
+      setProjectionNow(now);
       setFeedback(persisted.error.message);
       return;
     }

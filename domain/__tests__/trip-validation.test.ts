@@ -62,6 +62,7 @@ function validTrip(): Trip {
       {
         id: 'example-rule',
         type: 'buffer_below',
+        dayId: 'second-day',
         thresholdMinutes: 20,
         action: { type: 'recommend_skip', stopId: secondId },
       },
@@ -388,13 +389,36 @@ void test('duplicate placement error identifies the original reference', () => {
   });
 });
 
-void test('buffer rules reject unknown day scope and days without hard end', () => {
+void test('buffer rules require canonical day ownership and a matching target placement', () => {
+  const valid = validTrip();
+  assert.equal(validateTrip(valid).valid, true);
+
+  const missingDay = validTrip() as unknown as {
+    rules: Array<Record<string, unknown>>;
+  };
+  delete missingDay.rules[0].dayId;
+  assert.ok(
+    validateTrip(missingDay as unknown as Trip).errors.some(
+      ({ code, path }) =>
+        code === 'RULE_DAY_UNAVAILABLE' && path === 'rules[0].dayId',
+    ),
+  );
+
   const unknownDay = validTrip();
   unknownDay.rules![0].dayId = 'missing-day';
   assert.ok(
     validateTrip(unknownDay).errors.some(
       ({ code, path }) =>
         code === 'UNKNOWN_DAY_ID' && path === 'rules[0].dayId',
+    ),
+  );
+
+  const mismatchedTarget = validTrip();
+  mismatchedTarget.rules![0].dayId = 'first-day';
+  assert.ok(
+    validateTrip(mismatchedTarget).errors.some(
+      ({ code, path }) =>
+        code === 'RULE_TARGET_DAY_MISMATCH' && path === 'rules[0].dayId',
     ),
   );
 

@@ -9,6 +9,7 @@ export type TripValidationCode =
   | 'UNSUPPORTED_RULE'
   | 'UNKNOWN_DAY_ID'
   | 'RULE_DAY_UNAVAILABLE'
+  | 'RULE_TARGET_DAY_MISMATCH'
   | 'RULE_DAY_WITHOUT_HARD_END'
   | 'UNKNOWN_STOP_ID'
   | 'DUPLICATE_PLANNED_STOP'
@@ -423,30 +424,45 @@ export function validateTrip(trip: Trip): TripValidationResult {
       );
     }
 
-    const explicitDayId = rule.dayId;
-    if (explicitDayId !== undefined && !dayIds.has(explicitDayId)) {
+    if (typeof rule.dayId !== 'string') {
+      add(
+        'RULE_DAY_UNAVAILABLE',
+        `${path}.dayId`,
+        'A buffer_below rule requires an explicit dayId.',
+      );
+      return;
+    }
+    if (!dayIds.has(rule.dayId)) {
       add(
         'UNKNOWN_DAY_ID',
         `${path}.dayId`,
-        `Day "${String(explicitDayId)}" is absent from Trip.days.`,
+        `Day "${rule.dayId}" is absent from Trip.days.`,
       );
       return;
     }
-    const ruleDayId = explicitDayId ?? placementDayIds.get(action.stopId);
-    if (ruleDayId === undefined) {
+    const targetDayId = placementDayIds.get(action.stopId);
+    if (targetDayId === undefined) {
       add(
         'RULE_DAY_UNAVAILABLE',
         `${path}.action.stopId`,
-        'A rule without dayId requires a target with an original day placement.',
+        'A rule target requires an original planned day placement.',
       );
       return;
     }
-    const ruleDay = trip.days.find((day) => day.id === ruleDayId);
+    if (targetDayId !== rule.dayId) {
+      add(
+        'RULE_TARGET_DAY_MISMATCH',
+        `${path}.dayId`,
+        `Rule day "${rule.dayId}" does not match target Stop original planned day "${targetDayId}".`,
+      );
+      return;
+    }
+    const ruleDay = trip.days.find((day) => day.id === rule.dayId);
     if (ruleDay && !ruleDay.hardEndTime) {
       add(
         'RULE_DAY_WITHOUT_HARD_END',
-        `${path}${explicitDayId === undefined ? '.action.stopId' : '.dayId'}`,
-        `A buffer_below rule requires hardEndTime on day "${ruleDayId}".`,
+        `${path}.dayId`,
+        `A buffer_below rule requires hardEndTime on day "${rule.dayId}".`,
       );
     }
   });

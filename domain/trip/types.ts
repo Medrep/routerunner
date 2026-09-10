@@ -135,8 +135,8 @@ export interface Leg {
 export interface BufferBelowRule {
   id: string;
   type: 'buffer_below';
-  /** Optional explicit scope; frozen fixtures may derive it from the target placement. */
-  dayId?: string;
+  /** Immutable planning ownership; runtime execution never migrates rule scope. */
+  dayId: string;
   thresholdMinutes: number;
   action: {
     type: 'recommend_skip';

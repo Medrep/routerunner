@@ -326,7 +326,7 @@ function stateFromUnknown(
   }
 
   if (!Array.isArray(value.ruleAcknowledgements)) return undefined;
-  const ruleIds = new Set((trip.rules ?? []).map((rule) => rule.id));
+  const rulesById = new Map((trip.rules ?? []).map((rule) => [rule.id, rule]));
   const ruleAcknowledgements: RuleAcknowledgement[] = [];
   const acknowledgementKeys = new Set<string>();
   for (const rawAcknowledgement of value.ruleAcknowledgements) {
@@ -334,9 +334,11 @@ function stateFromUnknown(
       !isRecord(rawAcknowledgement) ||
       typeof rawAcknowledgement.ruleId !== 'string' ||
       rawAcknowledgement.ruleId.length === 0 ||
-      !ruleIds.has(rawAcknowledgement.ruleId) ||
+      !rulesById.has(rawAcknowledgement.ruleId) ||
       typeof rawAcknowledgement.executionDayId !== 'string' ||
       !dayIds.has(rawAcknowledgement.executionDayId) ||
+      rulesById.get(rawAcknowledgement.ruleId)?.dayId !==
+        rawAcknowledgement.executionDayId ||
       (rawAcknowledgement.severity !== 'SCHEDULE_TIGHT' &&
         rawAcknowledgement.severity !== 'DEADLINE_AT_RISK') ||
       !isIsoTimestamp(rawAcknowledgement.acknowledgedAt)

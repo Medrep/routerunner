@@ -8,7 +8,6 @@ import {
   copenhagenTrip,
 } from '../../data/trips/copenhagen.ts';
 import {
-  acknowledgeRuleRecommendation,
   clearExecutionState,
   completeCurrentStop,
   createInitialTripExecutionState,
@@ -278,25 +277,26 @@ void test('preserves populated future-contract arrays without adding behavior', 
 });
 
 void test('Tight and Risk Keep It acknowledgements survive reload without derived state', () => {
-  const tight = acknowledgeRuleRecommendation(
-    copenhagenTrip,
-    activeState(),
-    'copenhagen-reffen-buffer-below-30',
-    'SCHEDULE_TIGHT',
-    changedAt,
-  );
-  assert.equal(tight.ok, true);
   const riskAt = '2026-09-08T09:00:00.000Z';
-  const risk = acknowledgeRuleRecommendation(
-    copenhagenTrip,
-    tight.state,
-    'copenhagen-reffen-buffer-below-30',
-    'DEADLINE_AT_RISK',
-    riskAt,
-  );
-  assert.equal(risk.ok, true);
+  const state: TripExecutionState = {
+    ...activeState(),
+    ruleAcknowledgements: [
+      {
+        ruleId: 'copenhagen-reffen-buffer-below-30',
+        executionDayId: dayId,
+        severity: 'SCHEDULE_TIGHT',
+        acknowledgedAt: changedAt,
+      },
+      {
+        ruleId: 'copenhagen-reffen-buffer-below-30',
+        executionDayId: dayId,
+        severity: 'DEADLINE_AT_RISK',
+        acknowledgedAt: riskAt,
+      },
+    ],
+  };
 
-  const { storage, loaded } = roundTrip(risk.state);
+  const { storage, loaded } = roundTrip(state);
   assert.deepEqual(loaded.state.ruleAcknowledgements, [
     {
       ruleId: 'copenhagen-reffen-buffer-below-30',
@@ -352,6 +352,31 @@ void test('save rejects unknown acknowledgement IDs, days, and severities', () =
     );
     assert.equal(result.status, 'invalid');
   }
+
+  const twoDayTrip: Trip = {
+    ...copenhagenTrip,
+    endDate: '2026-09-09',
+    days: [
+      copenhagenTrip.days[0],
+      { id: 'copenhagen-day-2', date: '2026-09-09', plan: [] },
+    ],
+  };
+  const wrongRuleDay: TripExecutionState = {
+    ...state,
+    ruleAcknowledgements: [
+      {
+        ruleId: 'copenhagen-reffen-buffer-below-30',
+        executionDayId: 'copenhagen-day-2',
+        severity: 'SCHEDULE_TIGHT',
+        acknowledgedAt: changedAt,
+      },
+    ],
+  };
+  assert.equal(
+    saveExecutionState(twoDayTrip, wrongRuleDay, changedAt, new FakeStorage())
+      .status,
+    'invalid',
+  );
 });
 
 void test('rejects malformed JSON', () => {

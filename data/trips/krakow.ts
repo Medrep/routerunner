@@ -130,11 +130,31 @@ export const krakowField06Trip: Trip = {
       date: '2026-09-12',
       title: 'Kraków',
       plan: [
-        { stopId: krakowStopIds.placWolnica, order: 10 },
-        { stopId: krakowStopIds.mitZajezdnia, order: 20 },
-        { stopId: krakowStopIds.halaTargowa, order: 30 },
-        { stopId: krakowStopIds.rondoGrzegorzeckie, order: 40 },
-        { stopId: krakowStopIds.krakowGlowny, order: 50 },
+        {
+          stopId: krakowStopIds.placWolnica,
+          order: 10,
+          plannedStartTime: '13:00',
+        },
+        {
+          stopId: krakowStopIds.mitZajezdnia,
+          order: 20,
+          plannedStartTime: '13:10',
+        },
+        {
+          stopId: krakowStopIds.halaTargowa,
+          order: 30,
+          plannedStartTime: '14:55',
+        },
+        {
+          stopId: krakowStopIds.rondoGrzegorzeckie,
+          order: 40,
+          plannedStartTime: '15:15',
+        },
+        {
+          stopId: krakowStopIds.krakowGlowny,
+          order: 50,
+          plannedStartTime: '15:35',
+        },
       ],
     },
   ],

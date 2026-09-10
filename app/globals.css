@@ -853,6 +853,12 @@ body {
   font-size: 29px;
   letter-spacing: -1px;
 }
+.now .planned-start-time {
+  color: #245d49;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
 .stop-visit-content.current {
   margin: 17px 55px 0;
 }
@@ -960,6 +966,13 @@ body {
 }
 .next-step h3 {
   font-size: 20px;
+}
+.next-step h3 time {
+  color: #416052;
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .next-step p:last-child {
   font-size: 13px;
@@ -1071,6 +1084,13 @@ body {
 }
 .itinerary-stop > div {
   flex: 1;
+}
+.itinerary-planned-time {
+  flex: 0 0 auto;
+  color: #355c49;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 .itinerary-stop strong {
   font-size: 15px;
@@ -1448,6 +1468,11 @@ footer small {
   font-size: 14px;
   color: #5a6d54;
   margin-top: 9px;
+}
+.detail-description time {
+  color: #245d49;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 .stop-visit-content.details {
   margin-top: 21px;

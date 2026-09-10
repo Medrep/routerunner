@@ -297,6 +297,7 @@ export function validateTrip(trip: Trip): TripValidationResult {
     day.plan.forEach((item, itemIndex) => {
       const itemPath = `${path}.plan[${itemIndex}]`;
       stopReference(item.stopId, `${itemPath}.stopId`);
+      time(item.plannedStartTime, `${itemPath}.plannedStartTime`);
       const placement = placements.get(item.stopId);
       if (placement !== undefined)
         add(

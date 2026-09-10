@@ -82,6 +82,8 @@ export interface Stop {
 export interface DayPlanItem {
   stopId: StopId;
   order: number;
+  /** Immutable original local start time for this Stop's placement in the day. */
+  readonly plannedStartTime?: string;
 }
 
 export type PostDayNavigationTarget =

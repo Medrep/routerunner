@@ -39,6 +39,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import RouteMap from '@/components/routerunner/route-map';
+import {
+  dayPlanPresentationModel,
+  plannedStopPresentation,
+} from '@/components/routerunner/day-plan-presentation';
 import { stopDetailsCtaModel } from '@/components/routerunner/stop-visit-content';
 import { StopVisitContent } from '@/components/routerunner/stop-visit-content-view';
 import {
@@ -124,6 +128,7 @@ function ExecutionPage() {
   const [trip] = useState(() => selectTripFromSearch(window.location.search));
   const day = trip.days[0];
   const orderedPlan = orderedDayPlan(day);
+  const dayPlanModel = dayPlanPresentationModel(day, trip.stops);
   const [execution, setExecution] = useState<TripExecutionState>(
     () => restoreOrCreateExecutionState(trip, new Date().toISOString()).state,
   );
@@ -152,12 +157,18 @@ function ExecutionPage() {
     (stop) => stop.id === firstPreparedStopId,
   );
   const displayedStop = current ?? (!started ? firstPreparedStop : undefined);
+  const displayedPlanItem = plannedStopPresentation(
+    dayPlanModel,
+    displayedStop?.id,
+  );
   const detailsCta = displayedStop ? stopDetailsCtaModel(displayedStop) : null;
   const nextStopId = started
     ? nextEligiblePendingStopId(trip, execution)
     : orderedPlan[1]?.stopId;
   const nextStop = trip.stops.find((stop) => stop.id === nextStopId) ?? null;
+  const nextPlanItem = plannedStopPresentation(dayPlanModel, nextStopId);
   const detailStop = trip.stops.find((stop) => stop.id === detail) ?? null;
+  const detailPlanItem = plannedStopPresentation(dayPlanModel, detail);
   const completed = Object.values(execution.stopExecutions).filter(
     (stopExecution) => stopExecution.status === 'completed',
   ).length;
@@ -416,6 +427,14 @@ function ExecutionPage() {
                         {started ? 'Explore' : 'Your day begins here'} · ~
                         {displayedStop.plannedVisitMinutes} min
                       </p>
+                      {displayedPlanItem?.plannedStartTime && (
+                        <p className="planned-start-time">
+                          Planned{' '}
+                          <time dateTime={displayedPlanItem.plannedStartTime}>
+                            {displayedPlanItem.plannedStartTime}
+                          </time>
+                        </p>
+                      )}
                     </div>
                     <ChevronRight size={22} />
                   </button>
@@ -451,7 +470,15 @@ function ExecutionPage() {
                             <span className="inline-optional">◇ OPTIONAL</span>
                           )}
                         </p>
-                        <h3>{nextStop.name}</h3>
+                        <h3>
+                          {nextStop.name}
+                          {nextPlanItem?.plannedStartTime && (
+                            <time dateTime={nextPlanItem.plannedStartTime}>
+                              {' '}
+                              · {nextPlanItem.plannedStartTime}
+                            </time>
+                          )}
+                        </h3>
                         <p>
                           {nextLeg ? (
                             <>
@@ -522,17 +549,9 @@ function ExecutionPage() {
                 </span>
               </div>
               <ol>
-                {orderedPlan.map((item, planIndex) => {
-                  const stop = trip.stops.find(
-                    (candidate) => candidate.id === item.stopId,
-                  )!;
+                {dayPlanModel.map(({ stop, plannedStartTime }, planIndex) => {
                   const status = presentationStatus(stop.id);
-                  const previousItem = orderedPlan[planIndex - 1];
-                  const previousStop = previousItem
-                    ? trip.stops.find(
-                        (candidate) => candidate.id === previousItem.stopId,
-                      )
-                    : undefined;
+                  const previousStop = dayPlanModel[planIndex - 1]?.stop;
                   const travel = preparedLeg(previousStop, stop);
                   return (
                     <li key={stop.id} className={`itinerary-item ${status}`}>
@@ -567,6 +586,14 @@ function ExecutionPage() {
                             planIndex + 1
                           )}
                         </span>
+                        {plannedStartTime && (
+                          <time
+                            className="itinerary-planned-time"
+                            dateTime={plannedStartTime}
+                          >
+                            {plannedStartTime}
+                          </time>
+                        )}
                         <div>
                           <strong>{stop.name}</strong>
                           <span>
@@ -677,6 +704,14 @@ function ExecutionPage() {
                 {detailStop.plannedVisitMinutes} min to explore
                 {' · '}
                 {priorityLabel(detailStop)}
+                {detailPlanItem?.plannedStartTime && (
+                  <>
+                    {' · Planned '}
+                    <time dateTime={detailPlanItem.plannedStartTime}>
+                      {detailPlanItem.plannedStartTime}
+                    </time>
+                  </>
+                )}
               </SheetDescription>
               <StopVisitContent stop={detailStop} surface="details" />
               {detailStop.id === copenhagenStopIds.kastellet && (

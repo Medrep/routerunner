@@ -326,6 +326,7 @@ export function projectSchedule(
       constraintAlerts: [],
     };
   }
+  const lifecycle = tripExecutionLifecycle(trip, state);
   if (isTripComplete(trip, state)) {
     return {
       status: 'inactive',
@@ -333,13 +334,17 @@ export function projectSchedule(
       projectedStopIds: [],
     };
   }
+  if (lifecycle.status === 'DAY_COMPLETE') {
+    return {
+      status: 'inactive',
+      reason: 'day_complete',
+      projectedStopIds: [],
+    };
+  }
   if (!state.executionDayId) {
     return {
       status: 'inactive',
-      reason:
-        tripExecutionLifecycle(trip, state).status === 'DAY_COMPLETE'
-          ? 'day_complete'
-          : 'not_started',
+      reason: 'not_started',
       projectedStopIds: [],
     };
   }

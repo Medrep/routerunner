@@ -67,6 +67,7 @@ import {
   completeCurrentStop,
   currentGoogleMapsNavigationUrl,
   deriveRouteMapView,
+  doNowStop,
   endDay,
   nextEligiblePendingStopId,
   orderedDayPlan,
@@ -74,6 +75,7 @@ import {
   postDayGoogleMapsNavigationUrl,
   projectSchedule,
   restoreOrCreateExecutionState,
+  saveAllForLaterAndEndDay,
   saveCurrentForLater as saveCurrentForLaterTransition,
   saveExecutionState,
   startDayAndBuildNavigation,
@@ -267,6 +269,7 @@ function ExecutionPage() {
   const [full, setFull] = useState(false);
   const [detail, setDetail] = useState<StopId | null>(null);
   const [feedback, setFeedback] = useState('');
+  const [endDayResolutionOpen, setEndDayResolutionOpen] = useState(false);
   const initialExecution = useRef(execution);
   const selectedTripOption = selectableTrips.find(
     ({ trip: optionTrip }) => optionTrip.id === trip.id,
@@ -326,6 +329,15 @@ function ExecutionPage() {
   const nextStop = trip.stops.find((stop) => stop.id === nextStopId) ?? null;
   const nextPlanItem = plannedStopPresentation(dayPlanModel, nextStopId);
   const detailStop = trip.stops.find((stop) => stop.id === detail) ?? null;
+  const detailExecution = detail ? execution.stopExecutions[detail] : undefined;
+  const canDoNowDetail = Boolean(
+    detail &&
+    execution.executionDayId &&
+    lifecycle.status !== 'TRIP_COMPLETE' &&
+    detail !== execution.currentStopId &&
+    detailExecution?.status === 'pending' &&
+    !execution.doNowQueue.some((entry) => entry.stopId === detail),
+  );
   const detailPlanItem = plannedStopPresentation(dayPlanModel, detail);
   const completed = Object.values(execution.stopExecutions).filter(
     (stopExecution) => stopExecution.status === 'completed',
@@ -387,6 +399,7 @@ function ExecutionPage() {
       setFeedback(persisted.error.message);
       return;
     }
+    setEndDayResolutionOpen(false);
     setExecution(persisted.state);
     setProjectionNow(persisted.state.lastUpdatedAt);
     setFeedback(message(persisted.state));
@@ -479,12 +492,42 @@ function ExecutionPage() {
     setDetail(null);
   }
 
-  function endActiveDay() {
-    apply(endDay(trip, execution, new Date().toISOString()), (state) =>
+  function requestEndDay() {
+    const result = endDay(trip, execution, new Date().toISOString());
+    if (!result.ok && result.error.code === 'END_DAY_REQUIRES_RESOLUTION') {
+      setEndDayResolutionOpen(true);
+      setFeedback(result.error.message);
+      return;
+    }
+    apply(result, (state) =>
       tripExecutionLifecycle(trip, state).status === 'TRIP_COMPLETE'
         ? 'Trip complete.'
         : 'Day complete.',
     );
+  }
+
+  function saveAllForLaterAndCloseDay() {
+    setEndDayResolutionOpen(false);
+    apply(
+      saveAllForLaterAndEndDay(trip, execution, new Date().toISOString()),
+      (state) =>
+        tripExecutionLifecycle(trip, state).status === 'TRIP_COMPLETE'
+          ? 'Remaining stops saved for later. Trip complete.'
+          : 'Remaining stops saved for later. Day complete.',
+    );
+  }
+
+  function doNowSelectedStop() {
+    if (!detail) return;
+    const stopName = detailStop?.name ?? 'Stop';
+    apply(
+      doNowStop(trip, execution, detail, new Date().toISOString()),
+      (state) =>
+        state.currentStopId === detail
+          ? `${stopName} is now Current.`
+          : `${stopName} queued for now.`,
+    );
+    setDetail(null);
   }
 
   function keepRecommendation() {
@@ -711,19 +754,10 @@ function ExecutionPage() {
                     are ready.
                   </p>
                   <div className="actions">
-                    <button
-                      className="primary"
-                      onClick={endActiveDay}
-                      disabled={execution.doNowQueue.length > 0}
-                    >
+                    <button className="primary" onClick={requestEndDay}>
                       <Flag size={20} /> End Day
                     </button>
                   </div>
-                  {execution.doNowQueue.length > 0 && (
-                    <p className="action-context">
-                      Resolve queued Do Now work before ending the day.
-                    </p>
-                  )}
                 </div>
               ) : displayedStop ? (
                 <>
@@ -836,6 +870,15 @@ function ExecutionPage() {
                       ? `Done completes ${displayedStop.name}.`
                       : 'Start Day stays in RouteRunner. Start & navigate also opens Google Maps.'}
                   </p>
+                  {started && (
+                    <button
+                      type="button"
+                      className="end-day-action"
+                      onClick={requestEndDay}
+                    >
+                      <Flag size={16} /> End Day
+                    </button>
+                  )}
                 </>
               ) : null}
               {day.hardEndTime && !lifecycleComplete && (
@@ -854,6 +897,38 @@ function ExecutionPage() {
                 </div>
               )}
             </section>
+            {endDayResolutionOpen && (
+              <section
+                className="end-day-resolution"
+                aria-label="End Day remaining work"
+              >
+                <strong>Resolve remaining work</strong>
+                <p>
+                  Save every remaining scheduled stop for later, or keep the day
+                  open and review stops individually.
+                </p>
+                <div className="end-day-resolution-actions">
+                  <button type="button" onClick={saveAllForLaterAndCloseDay}>
+                    Save all for later
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEndDayResolutionOpen(false);
+                      setFeedback('Day remains open for individual review.');
+                    }}
+                  >
+                    Review individually
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEndDayResolutionOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </section>
+            )}
             {recommendation && recommendationStop && day.hardEndTime && (
               <section
                 className="recommendation"
@@ -1125,6 +1200,11 @@ function ExecutionPage() {
                 </div>
               )}
               <div className="actions">
+                {canDoNowDetail && (
+                  <button className="primary" onClick={doNowSelectedStop}>
+                    <ArrowRight size={20} /> Do now
+                  </button>
+                )}
                 {lifecycle.status === 'READY' &&
                   detail === firstPreparedStopId && (
                     <button

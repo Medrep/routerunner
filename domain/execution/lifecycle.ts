@@ -10,11 +10,13 @@ export type TripExecutionLifecycle =
 /** Terminal completion is derived from the canonical completed-day set. */
 export function isTripComplete(
   trip: Pick<Trip, 'days'>,
-  state: Pick<TripExecutionState, 'completedDayIds'>,
+  state: Pick<TripExecutionState, 'completedDayIds' | 'executionDayId'>,
 ): boolean {
-  return (
-    trip.days.length > 0 &&
-    trip.days.every((day) => state.completedDayIds.includes(day.id))
+  const finalDayId = trip.days.at(-1)?.id;
+  return Boolean(
+    finalDayId &&
+    state.completedDayIds.includes(finalDayId) &&
+    (state.executionDayId === undefined || state.executionDayId === finalDayId),
   );
 }
 
@@ -36,7 +38,9 @@ export function tripExecutionLifecycle(
     };
   }
   if (state.executionDayId) {
-    return { status: 'ACTIVE', dayId: state.executionDayId };
+    return state.completedDayIds.includes(state.executionDayId)
+      ? { status: 'DAY_COMPLETE', dayId: state.executionDayId }
+      : { status: 'ACTIVE', dayId: state.executionDayId };
   }
   if (lastCompletedDayId) {
     return { status: 'DAY_COMPLETE', dayId: lastCompletedDayId };

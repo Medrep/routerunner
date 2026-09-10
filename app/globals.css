@@ -1027,6 +1027,56 @@ body {
   margin-top: 10px;
   text-align: center;
 }
+.end-day-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+  margin: 10px auto 0;
+  padding: 8px 14px;
+  color: #53635c;
+  font-size: 13px;
+  font-weight: 650;
+}
+.end-day-resolution {
+  margin-top: 15px;
+  padding: 18px;
+  border: 1px solid #d8d0b7;
+  border-radius: 10px;
+  background: #f8f5e9;
+}
+.end-day-resolution > strong {
+  color: #3f4e45;
+  font-size: 16px;
+}
+.end-day-resolution > p {
+  margin-top: 7px;
+  color: #5d685f;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.end-day-resolution-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.end-day-resolution-actions button {
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid #c9c2aa;
+  border-radius: 8px;
+  background: #fff;
+  color: #405047;
+  font-size: 13px;
+  font-weight: 650;
+}
+.end-day-resolution-actions button:first-child {
+  border-color: #176b50;
+  background: #176b50;
+  color: #fff;
+}
 .deadline {
   border-top: 1px solid var(--border);
   padding-top: 16px;

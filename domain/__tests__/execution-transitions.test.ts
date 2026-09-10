@@ -290,7 +290,7 @@ void test('Done completes only Current and promotes the next static-plan stop', 
   assert.deepEqual(input, inputBefore);
 });
 
-void test('Done never reselects completed stops and the final Done does not complete the day', () => {
+void test('Done never reselects completed stops and final Done naturally completes the day', () => {
   let state = activeState();
   for (let index = 0; index < copenhagenTrip.stops.length; index += 1) {
     const result = completeCurrentStop(
@@ -305,7 +305,7 @@ void test('Done never reselects completed stops and the final Done does not comp
   assert.equal(state.currentStopId, undefined);
   assert.equal(state.currentStepStartedAt, undefined);
   assert.equal(state.currentInboundTravel, undefined);
-  assert.deepEqual(state.completedDayIds, []);
+  assert.deepEqual(state.completedDayIds, [dayId]);
   assert.equal(state.executionDayId, dayId);
   assert.ok(
     Object.values(state.stopExecutions).every(
@@ -372,7 +372,7 @@ void test('Save for Later keeps Current pending, unschedules it, and advances', 
   assert.deepEqual(input, inputBefore);
 });
 
-void test('Skip and Save for Later clear final Current without completing the day or trip', () => {
+void test('Skip and Save for Later clear final Current and naturally complete the day', () => {
   const base = activeState();
   const onlyCurrentRemains: TripExecutionState = {
     ...base,
@@ -394,7 +394,7 @@ void test('Skip and Save for Later clear final Current without completing the da
     assert.equal(result.ok, true);
     assert.equal(result.state.currentStopId, undefined);
     assert.equal(result.state.currentStepStartedAt, undefined);
-    assert.deepEqual(result.state.completedDayIds, []);
+    assert.deepEqual(result.state.completedDayIds, [dayId]);
     assert.equal(result.state.executionDayId, dayId);
     assert.equal('tripCompletedAt' in result.state, false);
   }

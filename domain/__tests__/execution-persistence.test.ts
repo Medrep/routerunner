@@ -250,8 +250,10 @@ void test('preserves an active day with no Current and does not complete it', ()
 void test('preserves populated future-contract arrays without adding behavior', () => {
   const trip: Trip = {
     ...copenhagenTrip,
+    startDate: '2026-09-07',
     endDate: '2026-09-09',
     days: [
+      { id: 'copenhagen-day-0', date: '2026-09-07', plan: [] },
       ...copenhagenTrip.days,
       { id: 'copenhagen-day-2', date: '2026-09-09', plan: [] },
     ],
@@ -264,7 +266,7 @@ void test('preserves populated future-contract arrays without adding behavior', 
         returnScheduledDayId: dayId,
       },
     ],
-    completedDayIds: ['copenhagen-day-2'],
+    completedDayIds: ['copenhagen-day-0'],
     ruleAcknowledgements: [
       {
         ruleId: 'copenhagen-reffen-buffer-below-30',

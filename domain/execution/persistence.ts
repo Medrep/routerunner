@@ -211,30 +211,55 @@ function hasCoherentExecutionStateRelationships(
       state.executionDayStartedAt === undefined &&
       state.currentStopId === undefined &&
       state.currentStepStartedAt === undefined &&
-      state.currentInboundTravel === undefined
+      state.currentInboundTravel === undefined &&
+      state.doNowQueue.length === 0
     );
   }
 
-  if (state.completedDayIds.includes(state.executionDayId)) return false;
-
   if (state.executionDayStartedAt === undefined) return false;
+
+  const finalDayId = trip.days.at(-1)?.id;
+  if (
+    finalDayId &&
+    state.completedDayIds.includes(finalDayId) &&
+    state.executionDayId !== finalDayId
+  ) {
+    return false;
+  }
+
+  if (state.completedDayIds.includes(state.executionDayId)) {
+    return (
+      state.currentStopId === undefined &&
+      state.currentStepStartedAt === undefined &&
+      state.currentInboundTravel === undefined &&
+      state.doNowQueue.length === 0 &&
+      !Object.values(state.stopExecutions).some(
+        (execution) =>
+          execution.status === 'pending' &&
+          execution.scheduledDayId === state.executionDayId,
+      )
+    );
+  }
 
   if (state.currentStopId === undefined) {
     return (
       state.currentStepStartedAt === undefined &&
-      state.currentInboundTravel === undefined
+      state.currentInboundTravel === undefined &&
+      state.doNowQueue.length === 0
     );
   }
 
   const currentExecution = state.stopExecutions[state.currentStopId];
+  const currentIsQueued = state.doNowQueue[0]?.stopId === state.currentStopId;
   return (
     currentExecution?.status === 'pending' &&
     currentExecution.scheduledDayId === state.executionDayId &&
     state.currentStepStartedAt !== undefined &&
     state.currentInboundTravel !== undefined &&
     state.currentInboundTravel.toStopId === state.currentStopId &&
-    firstEligiblePendingStopId(trip, state, state.executionDayId) ===
-      state.currentStopId
+    (currentIsQueued ||
+      firstEligiblePendingStopId(trip, state, state.executionDayId) ===
+        state.currentStopId)
   );
 }
 
@@ -307,6 +332,7 @@ function stateFromUnknown(
 
   if (!Array.isArray(value.doNowQueue)) return undefined;
   const doNowQueue: DoNowQueueEntry[] = [];
+  const queuedStopIds = new Set<StopId>();
   for (const rawEntry of value.doNowQueue) {
     if (!isRecord(rawEntry) || typeof rawEntry.stopId !== 'string') {
       return undefined;
@@ -315,7 +341,17 @@ function stateFromUnknown(
     const rawReturnDayId = rawEntry.returnScheduledDayId;
     const returnScheduledDayId =
       rawReturnDayId === null ? null : canonicalDayId(rawReturnDayId, dayIds);
-    if (!stopId || returnScheduledDayId === undefined) return undefined;
+    if (
+      !stopId ||
+      returnScheduledDayId === undefined ||
+      queuedStopIds.has(stopId) ||
+      executionDayId === undefined ||
+      stopExecutions[stopId]?.status !== 'pending' ||
+      stopExecutions[stopId]?.scheduledDayId !== executionDayId
+    ) {
+      return undefined;
+    }
+    queuedStopIds.add(stopId);
     doNowQueue.push({ stopId, returnScheduledDayId });
   }
 

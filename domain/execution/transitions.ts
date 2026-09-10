@@ -13,8 +13,8 @@ export type TransitionErrorCode =
   | 'DAY_ALREADY_COMPLETED'
   | 'DAY_NOT_COMPLETED'
   | 'EXECUTION_DAY_NOT_ACTIVE'
-  | 'EXECUTABLE_WORK_REMAINS'
-  | 'DO_NOW_QUEUE_NOT_EMPTY'
+  | 'END_DAY_REQUIRES_RESOLUTION'
+  | 'DAY_NOT_EXECUTION_CONTEXT'
   | 'TRIP_COMPLETE'
   | 'CURRENT_NOT_FOUND'
   | 'CURRENT_STOP_NOT_FOUND'
@@ -101,10 +101,22 @@ export function nextEligiblePendingStopId(
   trip: Pick<Trip, 'days'>,
   state: Pick<
     TripExecutionState,
-    'executionDayId' | 'currentStopId' | 'stopExecutions'
+    'doNowQueue' | 'executionDayId' | 'currentStopId' | 'stopExecutions'
   >,
 ): StopId | undefined {
   if (!state.executionDayId || !state.currentStopId) return undefined;
+
+  const currentQueueIndex = state.doNowQueue.findIndex(
+    (entry) => entry.stopId === state.currentStopId,
+  );
+  const queuedEntries =
+    currentQueueIndex < 0
+      ? state.doNowQueue
+      : state.doNowQueue.slice(currentQueueIndex + 1);
+  const queuedStopId = queuedEntries.find(
+    (entry) => state.stopExecutions[entry.stopId]?.status === 'pending',
+  )?.stopId;
+  if (queuedStopId) return queuedStopId;
 
   const day = trip.days.find(
     (candidate) => candidate.id === state.executionDayId,
@@ -115,9 +127,9 @@ export function nextEligiblePendingStopId(
   const currentIndex = orderedPlan.findIndex(
     (item) => item.stopId === state.currentStopId,
   );
-  if (currentIndex < 0) return undefined;
-
-  return orderedPlan.slice(currentIndex + 1).find((item) => {
+  const remainingPlan =
+    currentIndex < 0 ? orderedPlan : orderedPlan.slice(currentIndex + 1);
+  return remainingPlan.find((item) => {
     const execution = state.stopExecutions[item.stopId];
     return (
       execution?.status === 'pending' &&
@@ -183,14 +195,23 @@ function withAdvancedCurrent(
   priorCurrentStopId: StopId,
   now: string,
 ): TripExecutionState {
-  const nextStopId = firstEligiblePendingStopId(
-    trip,
-    state,
-    state.executionDayId!,
+  const doNowQueue = state.doNowQueue.filter(
+    (entry) => entry.stopId !== priorCurrentStopId,
   );
+  const stateAfterCurrent: TripExecutionState = { ...state, doNowQueue };
+  const nextStopId =
+    doNowQueue.find(
+      (entry) =>
+        stateAfterCurrent.stopExecutions[entry.stopId]?.status === 'pending',
+    )?.stopId ??
+    firstEligiblePendingStopId(
+      trip,
+      stateAfterCurrent,
+      stateAfterCurrent.executionDayId!,
+    );
 
-  return {
-    ...state,
+  const advanced: TripExecutionState = {
+    ...stateAfterCurrent,
     currentStopId: nextStopId,
     currentStepStartedAt: nextStopId ? now : undefined,
     currentInboundTravel: nextStopId
@@ -202,6 +223,48 @@ function withAdvancedCurrent(
       : undefined,
     lastUpdatedAt: now,
   };
+  return nextStopId ? advanced : withNaturallyCompletedDay(advanced, now);
+}
+
+function withCompletedDay(
+  state: TripExecutionState,
+  now: string,
+): TripExecutionState {
+  const dayId = state.executionDayId!;
+  return {
+    ...state,
+    currentStopId: undefined,
+    currentStepStartedAt: undefined,
+    currentInboundTravel: undefined,
+    doNowQueue: [],
+    completedDayIds: [...new Set([...state.completedDayIds, dayId])],
+    lastUpdatedAt: now,
+  };
+}
+
+function hasEligibleExecutionWork(state: TripExecutionState): boolean {
+  if (!state.executionDayId) return false;
+  return Boolean(
+    state.currentStopId ||
+    state.doNowQueue.some(
+      (entry) => state.stopExecutions[entry.stopId]?.status === 'pending',
+    ) ||
+    Object.values(state.stopExecutions).some(
+      (execution) =>
+        execution.status === 'pending' &&
+        execution.scheduledDayId === state.executionDayId,
+    ),
+  );
+}
+
+/** Called only after an execution transition, never merely because Current is null. */
+function withNaturallyCompletedDay(
+  state: TripExecutionState,
+  now: string,
+): TripExecutionState {
+  return state.executionDayId && !hasEligibleExecutionWork(state)
+    ? withCompletedDay(state, now)
+    : state;
 }
 
 export function startDay(
@@ -250,13 +313,11 @@ export function startDay(
   };
 }
 
-/**
- * Explicitly completes the active lifecycle day. Pending work scheduled to the
- * day and queued Do Now work must be resolved by their own transitions first.
- */
-export function endDay(
+/** Minimal Do Now boundary needed to resume a reversible completed day. */
+export function doNowStop(
   trip: Trip,
   state: TripExecutionState,
+  stopId: StopId,
   now: string,
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
@@ -266,48 +327,166 @@ export function endDay(
   if (!state.executionDayId) {
     return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
   }
-
-  const dayId = state.executionDayId;
-  if (!trip.days.some((day) => day.id === dayId)) {
-    return fail(
-      'DAY_NOT_FOUND',
-      `Active execution day ${dayId} does not exist.`,
-    );
+  const stop = trip.stops.find((candidate) => candidate.id === stopId);
+  if (!stop) return fail('STOP_NOT_FOUND', `Stop ${stopId} does not exist.`);
+  const execution = state.stopExecutions[stopId];
+  if (execution?.status !== 'pending') {
+    return fail('STOP_NOT_PENDING', `${stop.name} is no longer pending.`);
   }
-  if (state.completedDayIds.includes(dayId)) {
-    return fail('DAY_ALREADY_COMPLETED', `Day ${dayId} is already completed.`);
+  if (state.currentStopId === stopId) {
+    return fail('STOP_IS_CURRENT', `${stop.name} is Current.`);
   }
-  if (state.doNowQueue.length > 0) {
-    return fail(
-      'DO_NOW_QUEUE_NOT_EMPTY',
-      'Queued Do Now work must be resolved before ending the day.',
-    );
-  }
-  if (
-    state.currentStopId !== undefined ||
-    Object.values(state.stopExecutions).some(
-      (execution) =>
-        execution.status === 'pending' && execution.scheduledDayId === dayId,
-    )
-  ) {
-    return fail(
-      'EXECUTABLE_WORK_REMAINS',
-      'Executable work remains for the active day.',
-    );
+  if (state.doNowQueue.some((entry) => entry.stopId === stopId)) {
+    return fail('STOP_QUEUED', `${stop.name} is queued for Do Now.`);
   }
 
+  const becomesCurrent = state.currentStopId === undefined;
   return {
     ok: true,
     state: {
       ...state,
-      executionDayId: undefined,
-      executionDayStartedAt: undefined,
-      currentStopId: undefined,
-      currentStepStartedAt: undefined,
-      currentInboundTravel: undefined,
-      completedDayIds: [...new Set([...state.completedDayIds, dayId])],
+      completedDayIds: state.completedDayIds.filter(
+        (dayId) => dayId !== state.executionDayId,
+      ),
+      stopExecutions: {
+        ...state.stopExecutions,
+        [stopId]: {
+          ...execution,
+          scheduledDayId: state.executionDayId,
+        },
+      },
+      doNowQueue: [
+        ...state.doNowQueue,
+        { stopId, returnScheduledDayId: execution.scheduledDayId },
+      ],
+      currentStopId: becomesCurrent ? stopId : state.currentStopId,
+      currentStepStartedAt: becomesCurrent ? now : state.currentStepStartedAt,
+      currentInboundTravel: becomesCurrent
+        ? {
+            fromStopId: null,
+            toStopId: stopId,
+            duration: { status: 'unknown', reason: 'unresolved' },
+          }
+        : state.currentInboundTravel,
       lastUpdatedAt: now,
     },
+  };
+}
+
+function withCancelledDoNowOverrides(
+  state: TripExecutionState,
+): TripExecutionState {
+  const queuedByStopId = new Map(
+    state.doNowQueue.map((entry) => [entry.stopId, entry]),
+  );
+  const currentIsOverride =
+    state.currentStopId !== undefined &&
+    queuedByStopId.has(state.currentStopId);
+  const stopExecutions = { ...state.stopExecutions };
+  for (const entry of state.doNowQueue) {
+    const execution = stopExecutions[entry.stopId];
+    if (execution?.status === 'pending') {
+      stopExecutions[entry.stopId] = {
+        ...execution,
+        scheduledDayId: entry.returnScheduledDayId,
+      };
+    }
+  }
+
+  return {
+    ...state,
+    stopExecutions,
+    doNowQueue: [],
+    currentStopId: currentIsOverride ? undefined : state.currentStopId,
+    currentStepStartedAt: currentIsOverride
+      ? undefined
+      : state.currentStepStartedAt,
+    currentInboundTravel: currentIsOverride
+      ? undefined
+      : state.currentInboundTravel,
+  };
+}
+
+function validateEndDayContext(
+  trip: Trip,
+  state: TripExecutionState,
+): TransitionFailure | string {
+  const mismatch = tripMatchesState(trip, state);
+  if (mismatch) return mismatch;
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return terminal;
+  if (!state.executionDayId) {
+    return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
+  }
+  if (!trip.days.some((day) => day.id === state.executionDayId)) {
+    return fail(
+      'DAY_NOT_FOUND',
+      `Active execution day ${state.executionDayId} does not exist.`,
+    );
+  }
+  if (state.completedDayIds.includes(state.executionDayId)) {
+    return fail(
+      'DAY_ALREADY_COMPLETED',
+      `Day ${state.executionDayId} is already completed.`,
+    );
+  }
+  return state.executionDayId;
+}
+
+/**
+ * Explicitly completes a zero/resolved day, cancelling unfinished Do Now
+ * overrides. Normal scheduled work requires the bounded resolution flow.
+ */
+export function endDay(
+  trip: Trip,
+  state: TripExecutionState,
+  now: string,
+): TransitionResult {
+  const context = validateEndDayContext(trip, state);
+  if (typeof context !== 'string') return context;
+  const restored = withCancelledDoNowOverrides(state);
+  if (hasEligibleExecutionWork(restored)) {
+    return fail(
+      'END_DAY_REQUIRES_RESOLUTION',
+      'Choose how to resolve remaining scheduled work before ending the day.',
+    );
+  }
+  return { ok: true, state: withCompletedDay(restored, now) };
+}
+
+/** Resolves all normal current-day pending work without Skip or completion. */
+export function saveAllForLaterAndEndDay(
+  trip: Trip,
+  state: TripExecutionState,
+  now: string,
+): TransitionResult {
+  const context = validateEndDayContext(trip, state);
+  if (typeof context !== 'string') return context;
+  const restored = withCancelledDoNowOverrides(state);
+  const stopExecutions = { ...restored.stopExecutions };
+  for (const execution of Object.values(stopExecutions)) {
+    if (
+      execution.status === 'pending' &&
+      execution.scheduledDayId === context
+    ) {
+      stopExecutions[execution.stopId] = {
+        ...execution,
+        scheduledDayId: null,
+      };
+    }
+  }
+  return {
+    ok: true,
+    state: withCompletedDay(
+      {
+        ...restored,
+        stopExecutions,
+        currentStopId: undefined,
+        currentStepStartedAt: undefined,
+        currentInboundTravel: undefined,
+      },
+      now,
+    ),
   };
 }
 
@@ -328,6 +507,12 @@ export function reopenCompletedDay(
   }
   const terminal = terminalFailure(trip, state);
   if (terminal) return terminal;
+  if (state.executionDayId !== dayId) {
+    return fail(
+      'DAY_NOT_EXECUTION_CONTEXT',
+      `Day ${dayId} is not the retained execution day.`,
+    );
+  }
 
   return {
     ok: true,
@@ -461,7 +646,10 @@ function skipFutureTarget(
 
   return {
     ok: true,
-    state: withSkippedExecution(state, stopId, now),
+    state: withNaturallyCompletedDay(
+      withSkippedExecution(state, stopId, now),
+      now,
+    ),
   };
 }
 

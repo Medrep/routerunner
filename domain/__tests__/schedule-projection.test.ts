@@ -11,6 +11,7 @@ import {
   acceptSkipRecommendation,
   acknowledgeRuleRecommendation,
   activeExecutionRecommendation,
+  completeCurrentStop,
   createInitialTripExecutionState,
   createStopId,
   loadExecutionState,
@@ -1343,6 +1344,13 @@ void test('recommendation Skip is canonical, explicit, and recalculated', () => 
     state.currentInboundTravel,
   );
   assert.equal(boundedDecision(trip, skipped.state).recommendation, undefined);
+  const naturallyCompleted = completeCurrentStop(
+    trip,
+    skipped.state,
+    startedAt,
+  );
+  assert.equal(naturallyCompleted.ok, true);
+  assert.deepEqual(naturallyCompleted.state.completedDayIds, [dayId]);
   assert.equal(
     acceptSkipRecommendation(trip, skipped.state, 'skip-b-below-30', startedAt)
       .ok,

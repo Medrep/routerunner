@@ -39,6 +39,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import RouteMap from '@/components/routerunner/route-map';
+import { stopDetailsCtaModel } from '@/components/routerunner/stop-visit-content';
 import { StopVisitContent } from '@/components/routerunner/stop-visit-content-view';
 import {
   Sheet,
@@ -151,6 +152,7 @@ function ExecutionPage() {
     (stop) => stop.id === firstPreparedStopId,
   );
   const displayedStop = current ?? (!started ? firstPreparedStop : undefined);
+  const detailsCta = displayedStop ? stopDetailsCtaModel(displayedStop) : null;
   const nextStopId = started
     ? nextEligiblePendingStopId(trip, execution)
     : orderedPlan[1]?.stopId;
@@ -418,6 +420,16 @@ function ExecutionPage() {
                     <ChevronRight size={22} />
                   </button>
                   <StopVisitContent stop={displayedStop} surface="current" />
+                  {detailsCta && (
+                    <button
+                      type="button"
+                      className="details-cta"
+                      onClick={() => setDetail(detailsCta.detailStopId)}
+                    >
+                      {detailsCta.label}
+                      <ChevronRight size={17} aria-hidden="true" />
+                    </button>
+                  )}
                   {!started && (
                     <p className="start-intro">
                       Follow the prepared stops in order, with room to pause

@@ -1,6 +1,7 @@
 import {
   orderedStopVisitPlanItems,
   type Stop,
+  type StopId,
   type StopVisitPlanItem,
 } from '../../domain/index.ts';
 
@@ -12,6 +13,11 @@ export interface StopVisitContentModel {
   highlights?: readonly string[];
   visitPlanItemCount?: number;
   visitPlanItems?: readonly StopVisitPlanItem[];
+}
+
+export interface StopDetailsCtaModel {
+  readonly label: string;
+  readonly detailStopId: StopId;
 }
 
 /**
@@ -26,10 +32,13 @@ export function stopVisitContentModel(
     stop.highlights !== undefined && stop.highlights.length > 0
       ? stop.highlights
       : undefined;
-  const visitPlanItems =
+  const orderedVisitPlanItems =
     stop.visitPlan === undefined
       ? undefined
       : orderedStopVisitPlanItems(stop.visitPlan);
+  const visitPlanItems = orderedVisitPlanItems?.length
+    ? orderedVisitPlanItems
+    : undefined;
   if (
     stop.visitBrief === undefined &&
     highlights === undefined &&
@@ -47,5 +56,20 @@ export function stopVisitContentModel(
     ...(surface === 'details' && visitPlanItems !== undefined
       ? { visitPlanItems }
       : {}),
+  };
+}
+
+/** Derives a Details affordance from existing prepared Stop content only. */
+export function stopDetailsCtaModel(stop: Stop): StopDetailsCtaModel | null {
+  const details = stopVisitContentModel(stop, 'details');
+  if (details === null) return null;
+
+  const itemCount = details.visitPlanItems?.length;
+  return {
+    detailStopId: stop.id,
+    label:
+      itemCount === undefined
+        ? 'View details'
+        : `View ${itemCount} ${itemCount === 1 ? 'thing' : 'things'} inside`,
   };
 }

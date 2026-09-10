@@ -886,6 +886,24 @@ body {
   font-size: 14px;
   font-weight: 650;
 }
+.details-cta {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 55px 0;
+  padding: 9px 13px;
+  border: 1px solid #b8c8be;
+  border-radius: 9px;
+  background: #f5f8f5;
+  color: #245d49;
+  font-size: 14px;
+  font-weight: 700;
+}
+.details-cta:hover {
+  border-color: #93ad9d;
+  background: #edf4ef;
+}
 .stop-visit-plan {
   margin-top: 22px;
   padding-top: 20px;
@@ -1629,6 +1647,9 @@ footer small {
   }
   .stop-visit-content.current {
     margin: 15px 0 0;
+  }
+  .details-cta {
+    margin: 13px 0 0;
   }
   .next-step {
     margin-top: 18px;

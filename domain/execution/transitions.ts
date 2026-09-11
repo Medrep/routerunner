@@ -506,6 +506,12 @@ export function cancelDoNowStop(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
+  if (!hasCoherentExecutionStateRelationships(trip, state)) {
+    return fail(
+      'EXECUTION_STATE_INCOHERENT',
+      'The current execution state is not coherent enough to cancel Do Now.',
+    );
+  }
   const invalidTimestamp = runtimeTimestampFailure(now);
   if (invalidTimestamp) return invalidTimestamp;
   const terminal = terminalFailure(trip, state);

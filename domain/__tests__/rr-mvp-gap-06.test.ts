@@ -342,13 +342,19 @@ void test('Cancel rejects Current, active provenance, non-queued, terminal, mism
   const activeOverride = accepted(
     completeCurrentStop(trip, waiting, changedAt),
   );
+  let completed = normal;
+  for (const stopId of [ids.b, ids.c, ids.d, ids.x, ids.y, ids.z]) {
+    completed = accepted(
+      markAlreadyVisited(trip, completed, stopId, changedAt),
+    );
+  }
+  completed = accepted(completeCurrentStop(trip, completed, changedAt));
   const terminal: TripExecutionState = {
-    ...normal,
+    ...completed,
     executionDayId: dayTwoId,
-    currentStopId: undefined,
-    currentStepStartedAt: undefined,
-    currentInboundTravel: undefined,
-    completedDayIds: [dayTwoId],
+    executionDayStartedAt: laterAt,
+    completedDayIds: [dayOneId, dayTwoId],
+    lastUpdatedAt: laterAt,
   };
   const mismatch = { ...waiting, tripId: 'another-trip' };
   const cases = [
@@ -368,6 +374,80 @@ void test('Cancel rejects Current, active provenance, non-queued, terminal, mism
     assert.equal(result.error.code, code);
     assert.deepEqual(state, before);
   }
+});
+
+void test('Cancel rejects malformed DAY_COMPLETE input without restoring or removing its waiting override', () => {
+  const trip = fixtureTrip();
+  let dayComplete = activeState(trip);
+  for (const stopId of [ids.b, ids.c, ids.d]) {
+    dayComplete = accepted(
+      markAlreadyVisited(trip, dayComplete, stopId, changedAt),
+    );
+  }
+  dayComplete = accepted(completeCurrentStop(trip, dayComplete, changedAt));
+  assert.deepEqual(tripExecutionLifecycle(trip, dayComplete), {
+    status: 'DAY_COMPLETE',
+    dayId: dayOneId,
+  });
+  assert.deepEqual(
+    saveExecutionState(
+      trip,
+      dayComplete,
+      dayComplete.lastUpdatedAt,
+      new FakeStorage(),
+    ),
+    { status: 'saved', savedAt: dayComplete.lastUpdatedAt },
+  );
+
+  const malformed: TripExecutionState = {
+    ...dayComplete,
+    stopExecutions: {
+      ...dayComplete.stopExecutions,
+      [ids.x]: {
+        ...dayComplete.stopExecutions[ids.x],
+        scheduledDayId: dayOneId,
+      },
+    },
+    doNowQueue: [{ stopId: ids.x, returnScheduledDayId: dayTwoId }],
+  };
+  const before = structuredClone(malformed);
+  const result = cancelDoNowStop(trip, malformed, ids.x, laterAt);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'EXECUTION_STATE_INCOHERENT');
+  assert.deepEqual(malformed, before);
+  assert.equal(malformed.stopExecutions[ids.x].scheduledDayId, dayOneId);
+  assert.deepEqual(malformed.doNowQueue, [
+    { stopId: ids.x, returnScheduledDayId: dayTwoId },
+  ]);
+
+  const canonicalBefore = structuredClone(dayComplete);
+  const canonicalResult = cancelDoNowStop(trip, dayComplete, ids.x, laterAt);
+  assert.equal(canonicalResult.ok, false);
+  assert.equal(canonicalResult.error.code, 'STOP_QUEUED');
+  assert.deepEqual(dayComplete, canonicalBefore);
+});
+
+void test('Cancel rejects misplaced active provenance instead of normalizing its queue', () => {
+  const trip = fixtureTrip();
+  const activeOverride = accepted(
+    completeCurrentStop(trip, queued([ids.x, ids.z], trip), changedAt),
+  );
+  const malformed: TripExecutionState = {
+    ...activeOverride,
+    doNowQueue: [activeOverride.doNowQueue[1], activeOverride.doNowQueue[0]],
+  };
+  const before = structuredClone(malformed);
+  const result = cancelDoNowStop(trip, malformed, ids.z, laterAt);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'EXECUTION_STATE_INCOHERENT');
+  assert.deepEqual(malformed, before);
+  assert.equal(malformed.stopExecutions[ids.z].scheduledDayId, dayOneId);
+  assert.deepEqual(
+    malformed.doNowQueue.map((entry) => entry.stopId),
+    [ids.z, ids.x],
+  );
 });
 
 void test('Already Visited supports same-day, future-day, and For-Later without changing Current or planning history', () => {

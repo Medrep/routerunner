@@ -75,6 +75,7 @@ import {
   deriveRouteMapView,
   doNowStop,
   endDay,
+  isWaitingDoNow,
   nextEligiblePendingStopId,
   orderedDayPlan,
   persistExecutionTransition,
@@ -372,7 +373,7 @@ function ExecutionPage() {
     lifecycle.status !== 'TRIP_COMPLETE' &&
     detail !== execution.currentStopId &&
     detailExecution?.status === 'pending' &&
-    !execution.doNowQueue.some((entry) => entry.stopId === detail),
+    !isWaitingDoNow(execution, detail),
   );
   const detailPlanItem = plannedStopPresentation(dayPlanModel, detail);
   const detailHistory = detail

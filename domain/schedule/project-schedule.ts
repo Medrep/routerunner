@@ -1,5 +1,9 @@
 import type { TripExecutionState } from '../execution/types.ts';
 import {
+  isWaitingDoNow,
+  projectedExecutionStopIds,
+} from '../execution/execution-order.ts';
+import {
   isTripComplete,
   tripExecutionLifecycle,
 } from '../execution/lifecycle.ts';
@@ -88,52 +92,12 @@ export function shouldRefreshScheduleProjection(
   return state.currentStopId !== undefined;
 }
 
-function activeProjectedStops(
-  trip: Trip,
-  state: TripExecutionState,
-  day: TripDay,
-): Stop[] {
-  if (!state.currentStopId) return [];
-
+function activeProjectedStops(trip: Trip, state: TripExecutionState): Stop[] {
   const stopsById = new Map(trip.stops.map((stop) => [stop.id, stop]));
-  const projected: Stop[] = [];
-  const selected = new Set<StopId>();
-
-  const addPending = (stopId: StopId) => {
-    if (selected.has(stopId)) return;
-    const execution = state.stopExecutions[stopId];
+  return projectedExecutionStopIds(trip, state).flatMap((stopId) => {
     const stop = stopsById.get(stopId);
-    if (!stop || execution?.status !== 'pending') return;
-    selected.add(stopId);
-    projected.push(stop);
-  };
-
-  addPending(state.currentStopId);
-  if (projected.length === 0) return [];
-
-  for (const entry of state.doNowQueue) addPending(entry.stopId);
-
-  const orderedPlan = [...day.plan].sort(
-    (left, right) => left.order - right.order,
-  );
-  const currentPlanIndex = orderedPlan.findIndex(
-    (item) => item.stopId === state.currentStopId,
-  );
-  const remainingPlan =
-    currentPlanIndex < 0
-      ? orderedPlan
-      : orderedPlan.slice(currentPlanIndex + 1);
-  for (const item of remainingPlan) {
-    const execution = state.stopExecutions[item.stopId];
-    if (
-      execution?.status === 'pending' &&
-      execution.scheduledDayId === day.id
-    ) {
-      addPending(item.stopId);
-    }
-  }
-
-  return projected;
+    return stop ? [stop] : [];
+  });
 }
 
 function zonedParts(timestamp: number, timeZone: string) {
@@ -252,7 +216,7 @@ export function isRecommendationTargetEligible(
     execution?.status === 'pending' &&
     execution.scheduledDayId === state.executionDayId &&
     state.currentStopId !== stopId &&
-    !state.doNowQueue.some((entry) => entry.stopId === stopId),
+    !isWaitingDoNow(state, stopId),
   );
 }
 
@@ -381,7 +345,7 @@ export function projectSchedule(
     };
   }
 
-  const projectedStops = activeProjectedStops(trip, state, day);
+  const projectedStops = activeProjectedStops(trip, state);
   const projectedStopIds = projectedStops.map((stop) => stop.id);
   if (!state.currentStepStartedAt) {
     return {

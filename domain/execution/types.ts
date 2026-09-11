@@ -13,6 +13,7 @@ export interface StopExecution {
 
 export interface DoNowQueueEntry {
   stopId: StopId;
+  /** Exact planning context restored if an unfinished override is cancelled. */
   returnScheduledDayId: string | null;
 }
 
@@ -82,6 +83,10 @@ export interface TripExecutionState {
   currentStepStartedAt?: string;
   currentInboundTravel?: CurrentInboundTravel;
   stopExecutions: Record<StopId, StopExecution>;
+  /**
+   * Ordered Do Now execution/provenance ledger. The head is active provenance
+   * only when it identifies Current; every remaining entry is waiting FIFO.
+   */
   doNowQueue: DoNowQueueEntry[];
   /** Day IDs are unique; ordering is not execution ownership. */
   completedDayIds: string[];

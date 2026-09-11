@@ -1,9 +1,18 @@
-import type { DayPlanItem, StopId, Trip, TripDay } from '../trip/types.ts';
+import type { StopId, Trip, TripDay } from '../trip/types.ts';
 import {
   activeExecutionRecommendation,
   projectSchedule,
 } from '../schedule/project-schedule.ts';
 import { isTripComplete } from './lifecycle.ts';
+import {
+  activeDoNowOverride,
+  firstEligibleNormalStopId,
+  isActiveDoNowOverride,
+  isWaitingDoNow,
+  nextExecutionStopId,
+  orderedDayPlan,
+  waitingDoNowQueue,
+} from './execution-order.ts';
 import { isCanonicalIsoTimestamp, isKnownOrUnknownDuration } from './types.ts';
 import type {
   KnownOrUnknownDuration,
@@ -92,11 +101,6 @@ function terminalFailure(
   if (isTripComplete(trip, state)) {
     return fail('TRIP_COMPLETE', 'Trip execution is complete.');
   }
-}
-
-/** Returns a canonical plan view without mutating the TripDay source array. */
-export function orderedDayPlan(day: Pick<TripDay, 'plan'>): DayPlanItem[] {
-  return [...day.plan].sort((left, right) => left.order - right.order);
 }
 
 /** Returns the first pending stop in canonical numeric plan order. */
@@ -231,8 +235,9 @@ export function hasCoherentExecutionStateRelationships(
   }
 
   const currentExecution = state.stopExecutions[state.currentStopId];
-  const currentIsQueued = state.doNowQueue[0]?.stopId === state.currentStopId;
+  const currentIsOverride = isActiveDoNowOverride(state, state.currentStopId);
   return (
+    !isWaitingDoNow(state, state.currentStopId) &&
     currentExecution?.status === 'pending' &&
     currentExecution.scheduledDayId === state.executionDayId &&
     isCanonicalIsoTimestamp(state.currentStepStartedAt) &&
@@ -240,9 +245,8 @@ export function hasCoherentExecutionStateRelationships(
       new Date(state.executionDayStartedAt).valueOf() &&
     state.currentInboundTravel !== undefined &&
     state.currentInboundTravel.toStopId === state.currentStopId &&
-    (currentIsQueued ||
-      firstEligiblePendingStopId(trip, state, state.executionDayId) ===
-        state.currentStopId)
+    (currentIsOverride ||
+      firstEligibleNormalStopId(trip, state) === state.currentStopId)
   );
 }
 
@@ -255,37 +259,7 @@ export function nextEligiblePendingStopId(
   >,
 ): StopId | undefined {
   if (!state.executionDayId || !state.currentStopId) return undefined;
-
-  const currentQueueIndex = state.doNowQueue.findIndex(
-    (entry) => entry.stopId === state.currentStopId,
-  );
-  const queuedEntries =
-    currentQueueIndex < 0
-      ? state.doNowQueue
-      : state.doNowQueue.slice(currentQueueIndex + 1);
-  const queuedStopId = queuedEntries.find(
-    (entry) => state.stopExecutions[entry.stopId]?.status === 'pending',
-  )?.stopId;
-  if (queuedStopId) return queuedStopId;
-
-  const day = trip.days.find(
-    (candidate) => candidate.id === state.executionDayId,
-  );
-  if (!day) return undefined;
-
-  const orderedPlan = orderedDayPlan(day);
-  const currentIndex = orderedPlan.findIndex(
-    (item) => item.stopId === state.currentStopId,
-  );
-  const remainingPlan =
-    currentIndex < 0 ? orderedPlan : orderedPlan.slice(currentIndex + 1);
-  return remainingPlan.find((item) => {
-    const execution = state.stopExecutions[item.stopId];
-    return (
-      execution?.status === 'pending' &&
-      execution.scheduledDayId === state.executionDayId
-    );
-  })?.stopId;
+  return nextExecutionStopId(trip, state);
 }
 
 function currentContext(
@@ -345,20 +319,11 @@ function withAdvancedCurrent(
   priorCurrentStopId: StopId,
   now: string,
 ): TripExecutionState {
-  const doNowQueue = state.doNowQueue.filter(
-    (entry) => entry.stopId !== priorCurrentStopId,
-  );
+  const doNowQueue = isActiveDoNowOverride(state, priorCurrentStopId)
+    ? state.doNowQueue.slice(1)
+    : state.doNowQueue;
   const stateAfterCurrent: TripExecutionState = { ...state, doNowQueue };
-  const nextStopId =
-    doNowQueue.find(
-      (entry) =>
-        stateAfterCurrent.stopExecutions[entry.stopId]?.status === 'pending',
-    )?.stopId ??
-    firstEligiblePendingStopId(
-      trip,
-      stateAfterCurrent,
-      stateAfterCurrent.executionDayId!,
-    );
+  const nextStopId = nextExecutionStopId(trip, stateAfterCurrent);
 
   const advanced: TripExecutionState = {
     ...stateAfterCurrent,
@@ -396,7 +361,7 @@ function hasEligibleExecutionWork(state: TripExecutionState): boolean {
   if (!state.executionDayId) return false;
   return Boolean(
     state.currentStopId ||
-    state.doNowQueue.some(
+    waitingDoNowQueue(state).some(
       (entry) => state.stopExecutions[entry.stopId]?.status === 'pending',
     ) ||
     Object.values(state.stopExecutions).some(
@@ -486,7 +451,7 @@ export function doNowStop(
   if (state.currentStopId === stopId) {
     return fail('STOP_IS_CURRENT', `${stop.name} is Current.`);
   }
-  if (state.doNowQueue.some((entry) => entry.stopId === stopId)) {
+  if (isWaitingDoNow(state, stopId)) {
     return fail('STOP_QUEUED', `${stop.name} is queued for Do Now.`);
   }
 
@@ -526,12 +491,7 @@ export function doNowStop(
 function withCancelledDoNowOverrides(
   state: TripExecutionState,
 ): TripExecutionState {
-  const queuedByStopId = new Map(
-    state.doNowQueue.map((entry) => [entry.stopId, entry]),
-  );
-  const currentIsOverride =
-    state.currentStopId !== undefined &&
-    queuedByStopId.has(state.currentStopId);
+  const currentIsOverride = activeDoNowOverride(state) !== undefined;
   const stopExecutions = { ...state.stopExecutions };
   for (const entry of state.doNowQueue) {
     const execution = stopExecutions[entry.stopId];
@@ -952,7 +912,7 @@ function skipFutureTarget(
   if (state.currentStopId === stopId) {
     return fail('STOP_IS_CURRENT', `${stop.name} is Current.`);
   }
-  if (state.doNowQueue.some((entry) => entry.stopId === stopId)) {
+  if (isWaitingDoNow(state, stopId)) {
     return fail('STOP_QUEUED', `${stop.name} is queued for Do Now.`);
   }
   if (!stop.canSkip) {

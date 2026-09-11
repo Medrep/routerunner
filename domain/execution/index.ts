@@ -1,4 +1,13 @@
 export { createInitialTripExecutionState } from './create-execution-state.ts';
+export {
+  activeDoNowOverride,
+  isActiveDoNowOverride,
+  isWaitingDoNow,
+  orderedDayPlan,
+  projectedExecutionStopIds,
+  remainingEligibleNormalStopIds,
+  waitingDoNowQueue,
+} from './execution-order.ts';
 export { isTripComplete, tripExecutionLifecycle } from './lifecycle.ts';
 export type { TripExecutionLifecycle } from './lifecycle.ts';
 export {
@@ -19,7 +28,6 @@ export {
   endDay,
   firstEligiblePendingStopId,
   nextEligiblePendingStopId,
-  orderedDayPlan,
   reopenCompletedDay,
   saveAllForLaterAndEndDay,
   saveCurrentForLater,

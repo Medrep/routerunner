@@ -1,7 +1,5 @@
-import {
-  nextEligiblePendingStopId,
-  orderedDayPlan,
-} from '../execution/transitions.ts';
+import { orderedDayPlan } from '../execution/execution-order.ts';
+import { nextEligiblePendingStopId } from '../execution/transitions.ts';
 import { resolveWaypointSafeInboundLeg } from '../navigation/waypoint-safe-inbound-leg.ts';
 import type { ForegroundCoordinates } from '../location/foreground-location.ts';
 import type { StopId, StopPriority, TravelMode, Trip } from '../trip/types.ts';

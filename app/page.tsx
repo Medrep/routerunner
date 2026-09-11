@@ -85,9 +85,11 @@ import {
   saveCurrentForLater as saveCurrentForLaterTransition,
   saveExecutionState,
   startDayAndBuildNavigation,
+  switchExecutionDay,
   shouldRefreshScheduleProjection,
   tripExecutionLifecycle,
   type RouteMapStopStatus,
+  type KnownOrUnknownDuration,
   type Stop,
   type StopId,
   type ScheduleProjection,
@@ -277,6 +279,8 @@ function ExecutionPage() {
   const [detail, setDetail] = useState<StopId | null>(null);
   const [feedback, setFeedback] = useState('');
   const [endDayResolutionOpen, setEndDayResolutionOpen] = useState(false);
+  const [switchResolutionTargetDayId, setSwitchResolutionTargetDayId] =
+    useState<string>();
   const initialExecution = useRef(execution);
   const selectedTripOption = selectableTrips.find(
     ({ trip: optionTrip }) => optionTrip.id === trip.id,
@@ -294,6 +298,17 @@ function ExecutionPage() {
   const dayPlanModel = dayPlanPresentationModel(day, trip.stops);
   const isReadOnlyPreview = overview.isReadOnlyPreview;
   const refreshProjectionClock = shouldRefreshScheduleProjection(execution);
+  const executionDayIndex = trip.days.findIndex(
+    (candidate) => candidate.id === execution.executionDayId,
+  );
+  const nextPlannedDay =
+    lifecycle.status === 'TRIP_COMPLETE' || executionDayIndex < 0
+      ? undefined
+      : trip.days[executionDayIndex + 1];
+  const nextPlannedOverviewDay = nextPlannedDay
+    ? overview.days[executionDayIndex + 1]
+    : undefined;
+  const viewedDayCanStart = viewedDay.dayId === nextPlannedDay?.id;
 
   useEffect(() => {
     saveExecutionState(
@@ -425,6 +440,7 @@ function ExecutionPage() {
       return;
     }
     setEndDayResolutionOpen(false);
+    setSwitchResolutionTargetDayId(undefined);
     setExecution(persisted.state);
     setProjectionNow(persisted.state.lastUpdatedAt);
     setFeedback(message(persisted.state));
@@ -460,6 +476,62 @@ function ExecutionPage() {
     if (result.status === 'accepted' && result.navigationUrl) {
       window.location.assign(result.navigationUrl);
     }
+  }
+
+  function unresolvedNewDayInbound(): KnownOrUnknownDuration {
+    // Coordinates alone are not a travel-duration estimate. Until a routing
+    // provider resolves them, persist the explicit unavailable result.
+    return { status: 'unknown', reason: 'unavailable' };
+  }
+
+  function requestExecutionDaySwitch(
+    targetDayId: string,
+    resolution?: 'save_all_for_later',
+  ) {
+    const result = switchExecutionDay(
+      trip,
+      execution,
+      targetDayId,
+      new Date().toISOString(),
+      unresolvedNewDayInbound(),
+      resolution,
+    );
+    if (result.status === 'rejected') {
+      setFeedback(result.error.message);
+      return;
+    }
+    if (result.status === 'leftover_resolution_required') {
+      const oldDayNumber =
+        trip.days.findIndex((day) => day.id === result.oldDayId) + 1;
+      setSwitchResolutionTargetDayId(result.targetDayId);
+      setFeedback(
+        `Day ${oldDayNumber} still has ${result.remainingStopIds.length} stops remaining.`,
+      );
+      return;
+    }
+
+    const persisted = persistExecutionTransition(trip, execution, {
+      ok: true,
+      state: result.state,
+    });
+    if (persisted.status === 'rejected') {
+      setFeedback(persisted.error.message);
+      return;
+    }
+    setEndDayResolutionOpen(false);
+    setSwitchResolutionTargetDayId(undefined);
+    setExecution(persisted.state);
+    setViewedDayId(targetDayId);
+    setTripSurface('day');
+    setProjectionNow(persisted.state.lastUpdatedAt);
+    const promoted = trip.stops.find(
+      (stop) => stop.id === persisted.state.currentStopId,
+    );
+    setFeedback(
+      promoted
+        ? `${promoted.name} is now Current.`
+        : 'New execution day started with no Current.',
+    );
   }
 
   function done() {
@@ -637,6 +709,7 @@ function ExecutionPage() {
     setDetail(null);
     setFull(false);
     setEndDayResolutionOpen(false);
+    setSwitchResolutionTargetDayId(undefined);
     setFeedback('');
     setTripSurface('day');
   }
@@ -798,20 +871,33 @@ function ExecutionPage() {
                           'No planned stops'}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      className={
-                        overviewDay.dayId === overview.executionViewDayId
-                          ? 'primary'
-                          : 'secondary'
-                      }
-                      onClick={() => viewPlannedDay(overviewDay.dayId)}
-                    >
-                      {overviewDay.dayId === overview.executionViewDayId
-                        ? 'Open day'
-                        : 'Preview'}
-                      <ChevronRight size={18} />
-                    </button>
+                    <div className="actions">
+                      <button
+                        type="button"
+                        className={
+                          overviewDay.dayId === overview.executionViewDayId
+                            ? 'primary'
+                            : 'secondary'
+                        }
+                        onClick={() => viewPlannedDay(overviewDay.dayId)}
+                      >
+                        {overviewDay.dayId === overview.executionViewDayId
+                          ? 'Open day'
+                          : 'Preview'}
+                        <ChevronRight size={18} />
+                      </button>
+                      {overviewDay.dayId === nextPlannedDay?.id && (
+                        <button
+                          type="button"
+                          className="primary"
+                          onClick={() =>
+                            requestExecutionDaySwitch(overviewDay.dayId)
+                          }
+                        >
+                          Start {overviewDay.label}
+                        </button>
+                      )}
+                    </div>
                   </article>
                 );
               })}
@@ -896,13 +982,24 @@ function ExecutionPage() {
                           : 'No Current'}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      className="primary"
-                      onClick={returnToExecutionView}
-                    >
-                      <ArrowLeft size={19} /> Return to execution
-                    </button>
+                    <div className="actions">
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={returnToExecutionView}
+                      >
+                        <ArrowLeft size={19} /> Return to execution
+                      </button>
+                      {viewedDayCanStart && (
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => requestExecutionDaySwitch(day.id)}
+                        >
+                          Start {viewedDay.label}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : lifecycleComplete ? (
                   <div className="finished">
@@ -919,6 +1016,41 @@ function ExecutionPage() {
                         ? 'Sightseeing execution is complete. A good day, well spent.'
                         : 'This day is complete. The trip still has prepared days ahead.'}
                     </p>
+                    {lifecycle.status === 'DAY_COMPLETE' &&
+                      nextPlannedOverviewDay && (
+                        <div className="preview-context">
+                          <div>
+                            <strong>Tomorrow</strong>
+                            <p>
+                              {nextPlannedOverviewDay.label} ·{' '}
+                              {nextPlannedOverviewDay.day.title ??
+                                `${nextPlannedOverviewDay.plannedStopCount} planned stops`}
+                            </p>
+                          </div>
+                          <div className="actions">
+                            <button
+                              type="button"
+                              className="secondary"
+                              onClick={() =>
+                                viewPlannedDay(nextPlannedOverviewDay.dayId)
+                              }
+                            >
+                              View tomorrow
+                            </button>
+                            <button
+                              type="button"
+                              className="primary"
+                              onClick={() =>
+                                requestExecutionDaySwitch(
+                                  nextPlannedOverviewDay.dayId,
+                                )
+                              }
+                            >
+                              Start {nextPlannedOverviewDay.label}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     {postDayDestination && (
                       <div className="airport-callout">
                         <Plane size={22} aria-hidden="true" />
@@ -1135,6 +1267,47 @@ function ExecutionPage() {
                     <button
                       type="button"
                       onClick={() => setEndDayResolutionOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </section>
+              )}
+              {switchResolutionTargetDayId && (
+                <section
+                  className="end-day-resolution"
+                  aria-label="Execution day remaining work"
+                >
+                  <strong>{feedback}</strong>
+                  <p>
+                    Resolve the current day before starting the next planned
+                    day.
+                  </p>
+                  <div className="end-day-resolution-actions">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        requestExecutionDaySwitch(
+                          switchResolutionTargetDayId,
+                          'save_all_for_later',
+                        )
+                      }
+                    >
+                      Save all for later
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSwitchResolutionTargetDayId(undefined);
+                        returnToExecutionView();
+                        setFeedback('Day remains open for individual review.');
+                      }}
+                    >
+                      Review individually
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSwitchResolutionTargetDayId(undefined)}
                     >
                       Cancel
                     </button>

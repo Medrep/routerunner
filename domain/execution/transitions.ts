@@ -4,7 +4,11 @@ import {
   projectSchedule,
 } from '../schedule/project-schedule.ts';
 import { isTripComplete } from './lifecycle.ts';
-import type { StopExecution, TripExecutionState } from './types.ts';
+import type {
+  KnownOrUnknownDuration,
+  StopExecution,
+  TripExecutionState,
+} from './types.ts';
 
 export type TransitionErrorCode =
   | 'TRIP_STATE_MISMATCH'
@@ -15,6 +19,8 @@ export type TransitionErrorCode =
   | 'EXECUTION_DAY_NOT_ACTIVE'
   | 'END_DAY_REQUIRES_RESOLUTION'
   | 'DAY_NOT_EXECUTION_CONTEXT'
+  | 'NEXT_EXECUTION_DAY_REQUIRED'
+  | 'EXECUTION_STATE_INCOHERENT'
   | 'TRIP_COMPLETE'
   | 'CURRENT_NOT_FOUND'
   | 'CURRENT_STOP_NOT_FOUND'
@@ -40,6 +46,18 @@ type TransitionFailure = { ok: false; error: TransitionError };
 export type TransitionResult =
   | { ok: true; state: TripExecutionState }
   | TransitionFailure;
+
+export type SwitchExecutionDayResolution = 'save_all_for_later';
+
+export type SwitchExecutionDayResult =
+  | { status: 'switched'; state: TripExecutionState }
+  | {
+      status: 'leftover_resolution_required';
+      oldDayId: string;
+      targetDayId: string;
+      remainingStopIds: StopId[];
+    }
+  | { status: 'rejected'; error: TransitionError };
 
 type CurrentContext = {
   day: TripDay;
@@ -93,6 +111,132 @@ export function firstEligiblePendingStopId(
         execution?.status === 'pending' && execution.scheduledDayId === dayId
       );
     })?.stopId
+  );
+}
+
+/** Shared relationship guard used before switching and before persistence. */
+export function hasCoherentExecutionStateRelationships(
+  trip: Trip,
+  state: TripExecutionState,
+): boolean {
+  const stopIds = new Set(trip.stops.map((stop) => stop.id));
+  const dayIds = new Set(trip.days.map((day) => day.id));
+  const executionEntries = Object.entries(state.stopExecutions);
+  if (
+    executionEntries.length !== stopIds.size ||
+    executionEntries.some(
+      ([stopId, execution]) =>
+        !stopIds.has(stopId as StopId) ||
+        execution.stopId !== stopId ||
+        (execution.scheduledDayId !== null &&
+          !dayIds.has(execution.scheduledDayId)) ||
+        (execution.completedOnDayId !== undefined &&
+          !dayIds.has(execution.completedOnDayId)),
+    ) ||
+    new Set(state.completedDayIds).size !== state.completedDayIds.length ||
+    state.completedDayIds.some((dayId) => !dayIds.has(dayId))
+  ) {
+    return false;
+  }
+
+  for (const execution of Object.values(state.stopExecutions)) {
+    const hasCompletedAt = execution.completedRecordedAt !== undefined;
+    const hasCompletedDay = execution.completedOnDayId !== undefined;
+
+    if (execution.status === 'completed') {
+      if (!hasCompletedAt || !hasCompletedDay) return false;
+    } else if (hasCompletedAt || hasCompletedDay) {
+      return false;
+    }
+  }
+
+  const completedDayIds = new Set(state.completedDayIds);
+  if (
+    Object.values(state.stopExecutions).some(
+      (execution) =>
+        execution.status === 'pending' &&
+        execution.scheduledDayId !== null &&
+        completedDayIds.has(execution.scheduledDayId),
+    )
+  ) {
+    return false;
+  }
+
+  if (state.executionDayId === undefined) {
+    return (
+      state.completedDayIds.length === 0 &&
+      state.executionDayStartedAt === undefined &&
+      state.currentStopId === undefined &&
+      state.currentStepStartedAt === undefined &&
+      state.currentInboundTravel === undefined &&
+      state.doNowQueue.length === 0
+    );
+  }
+
+  if (
+    !trip.days.some((day) => day.id === state.executionDayId) ||
+    state.executionDayStartedAt === undefined
+  ) {
+    return false;
+  }
+
+  const finalDayId = trip.days.at(-1)?.id;
+  if (
+    finalDayId &&
+    state.completedDayIds.includes(finalDayId) &&
+    state.executionDayId !== finalDayId
+  ) {
+    return false;
+  }
+
+  if (state.completedDayIds.includes(state.executionDayId)) {
+    return (
+      state.currentStopId === undefined &&
+      state.currentStepStartedAt === undefined &&
+      state.currentInboundTravel === undefined &&
+      state.doNowQueue.length === 0 &&
+      !Object.values(state.stopExecutions).some(
+        (execution) =>
+          execution.status === 'pending' &&
+          execution.scheduledDayId === state.executionDayId,
+      )
+    );
+  }
+
+  const queuedStopIds = new Set<StopId>();
+  for (const entry of state.doNowQueue) {
+    const execution = state.stopExecutions[entry.stopId];
+    if (
+      queuedStopIds.has(entry.stopId) ||
+      (entry.returnScheduledDayId !== null &&
+        !dayIds.has(entry.returnScheduledDayId)) ||
+      execution?.status !== 'pending' ||
+      execution.scheduledDayId !== state.executionDayId
+    ) {
+      return false;
+    }
+    queuedStopIds.add(entry.stopId);
+  }
+
+  if (state.currentStopId === undefined) {
+    return (
+      state.currentStepStartedAt === undefined &&
+      state.currentInboundTravel === undefined &&
+      state.doNowQueue.length === 0
+    );
+  }
+
+  const currentExecution = state.stopExecutions[state.currentStopId];
+  const currentIsQueued = state.doNowQueue[0]?.stopId === state.currentStopId;
+  return (
+    currentExecution?.status === 'pending' &&
+    currentExecution.scheduledDayId === state.executionDayId &&
+    state.currentStepStartedAt !== undefined &&
+    state.currentInboundTravel !== undefined &&
+    state.currentInboundTravel.toStopId === state.currentStopId &&
+    (currentIsQueued ||
+      firstEligiblePendingStopId(trip, state, state.executionDayId) ===
+        state.currentStopId)
   );
 }
 
@@ -488,6 +632,147 @@ export function saveAllForLaterAndEndDay(
       now,
     ),
   };
+}
+
+function switchRejected(failure: TransitionFailure): SwitchExecutionDayResult {
+  return { status: 'rejected', error: failure.error };
+}
+
+/**
+ * Atomically completes the retained execution day and starts its canonical
+ * successor. Discovery never mutates state; only the explicit save-all
+ * resolution may unschedule normal old-day leftovers.
+ */
+export function switchExecutionDay(
+  trip: Trip,
+  state: TripExecutionState,
+  targetDayId: string,
+  now: string,
+  inboundDuration: KnownOrUnknownDuration,
+  resolution?: SwitchExecutionDayResolution,
+): SwitchExecutionDayResult {
+  const mismatch = tripMatchesState(trip, state);
+  if (mismatch) return switchRejected(mismatch);
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return switchRejected(terminal);
+
+  const targetDay = trip.days.find((day) => day.id === targetDayId);
+  if (!targetDay) {
+    return switchRejected(
+      fail('DAY_NOT_FOUND', `Day ${targetDayId} does not exist.`),
+    );
+  }
+  if (!state.executionDayId) {
+    return switchRejected(
+      fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.'),
+    );
+  }
+  if (state.executionDayId === targetDayId) {
+    return switchRejected(
+      fail(
+        'EXECUTION_DAY_ALREADY_ACTIVE',
+        `Execution day ${targetDayId} is already active.`,
+      ),
+    );
+  }
+
+  const oldDayIndex = trip.days.findIndex(
+    (day) => day.id === state.executionDayId,
+  );
+  if (oldDayIndex < 0) {
+    return switchRejected(
+      fail(
+        'DAY_NOT_FOUND',
+        `Active execution day ${state.executionDayId} does not exist.`,
+      ),
+    );
+  }
+  if (trip.days[oldDayIndex + 1]?.id !== targetDayId) {
+    return switchRejected(
+      fail(
+        'NEXT_EXECUTION_DAY_REQUIRED',
+        `Day ${targetDayId} is not the next planned execution day.`,
+      ),
+    );
+  }
+  if (state.completedDayIds.includes(targetDayId)) {
+    return switchRejected(
+      fail('DAY_ALREADY_COMPLETED', `Day ${targetDayId} is already completed.`),
+    );
+  }
+  if (!hasCoherentExecutionStateRelationships(trip, state)) {
+    return switchRejected(
+      fail(
+        'EXECUTION_STATE_INCOHERENT',
+        'The current execution state is not coherent enough to switch days.',
+      ),
+    );
+  }
+
+  // Restore temporary planning overrides before classifying normal leftovers.
+  const restored = withCancelledDoNowOverrides(state);
+  const remainingStopIds = Object.values(restored.stopExecutions)
+    .filter(
+      (execution) =>
+        execution.status === 'pending' &&
+        execution.scheduledDayId === state.executionDayId,
+    )
+    .map((execution) => execution.stopId);
+
+  if (remainingStopIds.length > 0 && resolution === undefined) {
+    return {
+      status: 'leftover_resolution_required',
+      oldDayId: state.executionDayId,
+      targetDayId,
+      remainingStopIds,
+    };
+  }
+
+  let resolved = restored;
+  if (remainingStopIds.length > 0) {
+    const stopExecutions = { ...restored.stopExecutions };
+    for (const stopId of remainingStopIds) {
+      stopExecutions[stopId] = {
+        ...stopExecutions[stopId],
+        scheduledDayId: null,
+      };
+    }
+    resolved = { ...restored, stopExecutions };
+  }
+
+  const oldDayComplete = state.completedDayIds.includes(state.executionDayId)
+    ? resolved
+    : withCompletedDay(resolved, now);
+  const currentStopId = firstEligiblePendingStopId(
+    trip,
+    oldDayComplete,
+    targetDayId,
+  );
+  const switched: TripExecutionState = {
+    ...oldDayComplete,
+    executionDayId: targetDayId,
+    executionDayStartedAt: now,
+    currentStopId,
+    currentStepStartedAt: currentStopId ? now : undefined,
+    currentInboundTravel: currentStopId
+      ? {
+          fromStopId: null,
+          toStopId: currentStopId,
+          duration: inboundDuration,
+        }
+      : undefined,
+    lastUpdatedAt: now,
+  };
+
+  if (!hasCoherentExecutionStateRelationships(trip, switched)) {
+    return switchRejected(
+      fail(
+        'EXECUTION_STATE_INCOHERENT',
+        'The requested day switch would produce an incoherent execution state.',
+      ),
+    );
+  }
+  return { status: 'switched', state: switched };
 }
 
 /** Reopens only day lifecycle; Stop execution and scheduling remain unchanged. */

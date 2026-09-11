@@ -643,9 +643,11 @@ body {
 .trip-overview-stop-names {
   margin-top: 4px;
 }
-.trip-overview-day > button {
-  max-width: 145px;
-  flex: 0 0 145px;
+.trip-overview-day > .actions {
+  max-width: 180px;
+  flex: 0 0 180px;
+  flex-direction: column;
+  margin-top: 0;
 }
 .trip-overview-note {
   margin: 18px 4px 0;
@@ -993,8 +995,8 @@ body {
   color: #56695e;
   font-size: 13px;
 }
-.preview-context > button {
-  width: 100%;
+.preview-context > .actions {
+  margin-top: 0;
 }
 .active-label {
   font-size: 12px;
@@ -1895,7 +1897,7 @@ footer small {
     gap: 16px;
     padding: 17px;
   }
-  .trip-overview-day > button {
+  .trip-overview-day > .actions {
     width: 100%;
     max-width: none;
     flex-basis: auto;

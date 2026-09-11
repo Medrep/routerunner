@@ -25,8 +25,11 @@ export {
   saveCurrentForLater,
   skipCurrentStop,
   startDay,
+  switchExecutionDay,
 } from './transitions.ts';
 export type {
+  SwitchExecutionDayResolution,
+  SwitchExecutionDayResult,
   TransitionError,
   TransitionErrorCode,
   TransitionResult,

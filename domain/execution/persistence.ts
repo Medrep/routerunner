@@ -9,7 +9,7 @@ import type {
   TripExecutionState,
 } from './types.ts';
 import { createInitialTripExecutionState } from './create-execution-state.ts';
-import { firstEligiblePendingStopId } from './transitions.ts';
+import { hasCoherentExecutionStateRelationships } from './transitions.ts';
 import type { TransitionError, TransitionResult } from './transitions.ts';
 
 export const EXECUTION_STATE_SCHEMA_VERSION = 2;
@@ -189,91 +189,6 @@ function stopExecutionFromUnknown(
     execution.completedOnDayId = completedOnDayId;
   }
   return execution;
-}
-
-function hasCoherentExecutionStateRelationships(
-  trip: Trip,
-  state: TripExecutionState,
-): boolean {
-  for (const execution of Object.values(state.stopExecutions)) {
-    const hasCompletedAt = execution.completedRecordedAt !== undefined;
-    const hasCompletedDay = execution.completedOnDayId !== undefined;
-
-    if (execution.status === 'completed') {
-      if (!hasCompletedAt || !hasCompletedDay) return false;
-    } else if (hasCompletedAt || hasCompletedDay) {
-      return false;
-    }
-  }
-
-  const completedDayIds = new Set(state.completedDayIds);
-  if (
-    Object.values(state.stopExecutions).some(
-      (execution) =>
-        execution.status === 'pending' &&
-        execution.scheduledDayId !== null &&
-        completedDayIds.has(execution.scheduledDayId),
-    )
-  ) {
-    return false;
-  }
-
-  if (state.executionDayId === undefined) {
-    return (
-      state.completedDayIds.length === 0 &&
-      state.executionDayStartedAt === undefined &&
-      state.currentStopId === undefined &&
-      state.currentStepStartedAt === undefined &&
-      state.currentInboundTravel === undefined &&
-      state.doNowQueue.length === 0
-    );
-  }
-
-  if (state.executionDayStartedAt === undefined) return false;
-
-  const finalDayId = trip.days.at(-1)?.id;
-  if (
-    finalDayId &&
-    state.completedDayIds.includes(finalDayId) &&
-    state.executionDayId !== finalDayId
-  ) {
-    return false;
-  }
-
-  if (state.completedDayIds.includes(state.executionDayId)) {
-    return (
-      state.currentStopId === undefined &&
-      state.currentStepStartedAt === undefined &&
-      state.currentInboundTravel === undefined &&
-      state.doNowQueue.length === 0 &&
-      !Object.values(state.stopExecutions).some(
-        (execution) =>
-          execution.status === 'pending' &&
-          execution.scheduledDayId === state.executionDayId,
-      )
-    );
-  }
-
-  if (state.currentStopId === undefined) {
-    return (
-      state.currentStepStartedAt === undefined &&
-      state.currentInboundTravel === undefined &&
-      state.doNowQueue.length === 0
-    );
-  }
-
-  const currentExecution = state.stopExecutions[state.currentStopId];
-  const currentIsQueued = state.doNowQueue[0]?.stopId === state.currentStopId;
-  return (
-    currentExecution?.status === 'pending' &&
-    currentExecution.scheduledDayId === state.executionDayId &&
-    state.currentStepStartedAt !== undefined &&
-    state.currentInboundTravel !== undefined &&
-    state.currentInboundTravel.toStopId === state.currentStopId &&
-    (currentIsQueued ||
-      firstEligiblePendingStopId(trip, state, state.executionDayId) ===
-        state.currentStopId)
-  );
 }
 
 function stateFromUnknown(

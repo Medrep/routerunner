@@ -21,6 +21,7 @@ import {
   saveExecutionState,
   skipCurrentStop,
   startDay,
+  tripExecutionLifecycle,
 } from '../index.ts';
 import type {
   ExecutionStorage,
@@ -93,6 +94,104 @@ function activeState() {
   );
 }
 
+const persistenceDayOneId = 'persistence-day-1';
+const persistenceDayTwoId = 'persistence-day-2';
+const persistenceTrip: Trip = {
+  ...copenhagenTrip,
+  id: 'persistence-coherence',
+  title: 'Persistence coherence fixture',
+  startDate: '2026-09-08',
+  endDate: '2026-09-09',
+  stops: copenhagenTrip.stops.filter((stop) =>
+    [
+      copenhagenStopIds.nyhavn,
+      copenhagenStopIds.amalienborg,
+      copenhagenStopIds.reffen,
+    ].includes(stop.id),
+  ),
+  days: [
+    {
+      id: persistenceDayOneId,
+      date: '2026-09-08',
+      plan: [{ stopId: copenhagenStopIds.nyhavn, order: 10 }],
+    },
+    {
+      id: persistenceDayTwoId,
+      date: '2026-09-09',
+      plan: [{ stopId: copenhagenStopIds.amalienborg, order: 10 }],
+    },
+  ],
+  rules: [],
+};
+
+function startedPersistenceState(day: string): TripExecutionState {
+  return successfulState(
+    startDay(
+      persistenceTrip,
+      createInitialTripExecutionState(persistenceTrip, initializedAt),
+      day,
+      startedAt,
+    ),
+  );
+}
+
+function removeCurrent(state: TripExecutionState): void {
+  delete state.currentStopId;
+  delete state.currentStepStartedAt;
+  delete state.currentInboundTravel;
+}
+
+function canonicalDayOneComplete(): TripExecutionState {
+  const state = structuredClone(startedPersistenceState(persistenceDayOneId));
+  state.stopExecutions[copenhagenStopIds.nyhavn] = {
+    ...state.stopExecutions[copenhagenStopIds.nyhavn],
+    status: 'skipped',
+  };
+  state.completedDayIds = [persistenceDayOneId];
+  removeCurrent(state);
+  return state;
+}
+
+function canonicalTripComplete(): TripExecutionState {
+  const state = structuredClone(startedPersistenceState(persistenceDayTwoId));
+  for (const stopId of [
+    copenhagenStopIds.nyhavn,
+    copenhagenStopIds.amalienborg,
+  ]) {
+    state.stopExecutions[stopId] = {
+      ...state.stopExecutions[stopId],
+      status: 'skipped',
+    };
+  }
+  state.completedDayIds = [persistenceDayOneId, persistenceDayTwoId];
+  removeCurrent(state);
+  return state;
+}
+
+function assertRejectedOnSaveAndHydrate(
+  trip: Trip,
+  state: TripExecutionState,
+  version = EXECUTION_STATE_SCHEMA_VERSION,
+): void {
+  const storage = new FakeStorage();
+  assert.equal(
+    saveExecutionState(trip, state, state.lastUpdatedAt, storage).status,
+    'invalid',
+  );
+  assert.equal(storage.writes, 0);
+
+  const serialized = JSON.stringify({
+    version,
+    tripId: trip.id,
+    savedAt: state.lastUpdatedAt,
+    state,
+  });
+  assert.equal(deserializeExecutionState(serialized, trip).status, 'invalid');
+
+  storage.values.set(executionStorageKey(trip.id), serialized);
+  assert.equal(loadExecutionState(trip, storage).status, 'invalid');
+}
+
 function roundTrip(state: TripExecutionState, trip: Trip = copenhagenTrip) {
   const storage = new FakeStorage();
   assert.deepEqual(
@@ -162,7 +261,161 @@ void test('migrates version 1 execution progress only when legacy acknowledgemen
 });
 
 void test('round-trips fresh pre-start execution state', () => {
-  roundTrip(initialState());
+  const { loaded } = roundTrip(initialState());
+  assert.equal(
+    tripExecutionLifecycle(copenhagenTrip, loaded.state).status,
+    'READY',
+  );
+  assert.equal(loaded.state.executionDayId, undefined);
+  assert.deepEqual(loaded.state.completedDayIds, []);
+});
+
+void test('rejects an orphan final completion marker with pending scheduled work', () => {
+  const state: TripExecutionState = {
+    ...initialState(),
+    completedDayIds: [dayId],
+  };
+
+  assert.equal(
+    tripExecutionLifecycle(copenhagenTrip, state).status,
+    'TRIP_COMPLETE',
+  );
+  assertRejectedOnSaveAndHydrate(copenhagenTrip, state);
+});
+
+void test('rejects an orphan completion marker even when all work is resolved', () => {
+  const state = structuredClone(initialState());
+  for (const execution of Object.values(state.stopExecutions)) {
+    execution.status = 'skipped';
+  }
+  state.completedDayIds = [dayId];
+
+  assertRejectedOnSaveAndHydrate(copenhagenTrip, state);
+});
+
+void test('rejects duplicate and unknown completion markers at both boundaries', () => {
+  const duplicate = canonicalDayOneComplete();
+  duplicate.completedDayIds = [persistenceDayOneId, persistenceDayOneId];
+  assertRejectedOnSaveAndHydrate(persistenceTrip, duplicate);
+
+  const unknown = canonicalDayOneComplete();
+  unknown.completedDayIds = ['missing-day'];
+  assertRejectedOnSaveAndHydrate(persistenceTrip, unknown);
+});
+
+void test('round-trips canonical reversible DAY_COMPLETE with retained context', () => {
+  const state = canonicalDayOneComplete();
+  const { loaded } = roundTrip(state, persistenceTrip);
+
+  assert.equal(loaded.state.executionDayId, persistenceDayOneId);
+  assert.deepEqual(loaded.state.completedDayIds, [persistenceDayOneId]);
+  assert.deepEqual(tripExecutionLifecycle(persistenceTrip, loaded.state), {
+    status: 'DAY_COMPLETE',
+    dayId: persistenceDayOneId,
+  });
+});
+
+void test('round-trips canonical TRIP_COMPLETE while preserving For Later', () => {
+  const state = canonicalTripComplete();
+  const { loaded } = roundTrip(state, persistenceTrip);
+
+  assert.deepEqual(tripExecutionLifecycle(persistenceTrip, loaded.state), {
+    status: 'TRIP_COMPLETE',
+    dayId: persistenceDayTwoId,
+  });
+  assert.equal(
+    loaded.state.stopExecutions[copenhagenStopIds.reffen].status,
+    'pending',
+  );
+  assert.equal(
+    loaded.state.stopExecutions[copenhagenStopIds.reffen].scheduledDayId,
+    null,
+  );
+});
+
+void test('rejects completed days containing pending scheduled work', () => {
+  const nonTerminal = canonicalDayOneComplete();
+  nonTerminal.stopExecutions[copenhagenStopIds.nyhavn] = {
+    ...nonTerminal.stopExecutions[copenhagenStopIds.nyhavn],
+    status: 'pending',
+    scheduledDayId: persistenceDayOneId,
+  };
+  assertRejectedOnSaveAndHydrate(persistenceTrip, nonTerminal);
+
+  const terminalFinalDay = canonicalTripComplete();
+  terminalFinalDay.stopExecutions[copenhagenStopIds.amalienborg] = {
+    ...terminalFinalDay.stopExecutions[copenhagenStopIds.amalienborg],
+    status: 'pending',
+    scheduledDayId: persistenceDayTwoId,
+  };
+  assertRejectedOnSaveAndHydrate(persistenceTrip, terminalFinalDay);
+
+  const terminalEarlierDay = canonicalTripComplete();
+  terminalEarlierDay.stopExecutions[copenhagenStopIds.nyhavn] = {
+    ...terminalEarlierDay.stopExecutions[copenhagenStopIds.nyhavn],
+    status: 'pending',
+    scheduledDayId: persistenceDayOneId,
+  };
+  assertRejectedOnSaveAndHydrate(persistenceTrip, terminalEarlierDay);
+});
+
+void test('accepts a coherent completed past day with a later active context', () => {
+  const state = structuredClone(startedPersistenceState(persistenceDayTwoId));
+  state.stopExecutions[copenhagenStopIds.nyhavn] = {
+    ...state.stopExecutions[copenhagenStopIds.nyhavn],
+    status: 'skipped',
+  };
+  state.completedDayIds = [persistenceDayOneId];
+
+  const { loaded } = roundTrip(state, persistenceTrip);
+  assert.equal(loaded.state.executionDayId, persistenceDayTwoId);
+  assert.deepEqual(loaded.state.completedDayIds, [persistenceDayOneId]);
+  assert.equal(
+    tripExecutionLifecycle(persistenceTrip, loaded.state).status,
+    'ACTIVE',
+  );
+});
+
+void test('round-trips a true active zero-work day without completing it', () => {
+  const trip: Trip = {
+    ...persistenceTrip,
+    id: 'persistence-zero-work',
+    endDate: persistenceTrip.startDate,
+    stops: [
+      persistenceTrip.stops.find(
+        (stop) => stop.id === copenhagenStopIds.reffen,
+      )!,
+    ],
+    days: [
+      { id: persistenceDayOneId, date: persistenceTrip.startDate, plan: [] },
+    ],
+  };
+  const state = successfulState(
+    startDay(
+      trip,
+      createInitialTripExecutionState(trip, initializedAt),
+      persistenceDayOneId,
+      startedAt,
+    ),
+  );
+  removeCurrent(state);
+  const { loaded } = roundTrip(state, trip);
+
+  assert.equal(loaded.state.currentStopId, undefined);
+  assert.deepEqual(loaded.state.completedDayIds, []);
+  assert.deepEqual(tripExecutionLifecycle(trip, loaded.state), {
+    status: 'ACTIVE',
+    dayId: persistenceDayOneId,
+  });
+});
+
+void test('rejects ambiguous legacy completion context instead of guessing', () => {
+  const state: TripExecutionState = {
+    ...initialState(),
+    completedDayIds: [dayId],
+  };
+
+  assertRejectedOnSaveAndHydrate(copenhagenTrip, state, 1);
 });
 
 void test('round-trips Start Day with Nyhavn Current and unknown duration', () => {

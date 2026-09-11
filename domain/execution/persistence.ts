@@ -206,8 +206,21 @@ function hasCoherentExecutionStateRelationships(
     }
   }
 
+  const completedDayIds = new Set(state.completedDayIds);
+  if (
+    Object.values(state.stopExecutions).some(
+      (execution) =>
+        execution.status === 'pending' &&
+        execution.scheduledDayId !== null &&
+        completedDayIds.has(execution.scheduledDayId),
+    )
+  ) {
+    return false;
+  }
+
   if (state.executionDayId === undefined) {
     return (
+      state.completedDayIds.length === 0 &&
       state.executionDayStartedAt === undefined &&
       state.currentStopId === undefined &&
       state.currentStepStartedAt === undefined &&

@@ -24,6 +24,7 @@ import {
 } from '../index.ts';
 import type {
   ExecutionEvent,
+  StopId,
   TransitionResult,
   Trip,
   TripExecutionState,
@@ -94,6 +95,58 @@ const trip: Trip = {
   ],
 };
 
+const compoundIds = {
+  a: createStopId('compound-a'),
+  b: createStopId('compound-b'),
+  c: createStopId('compound-c'),
+  override: createStopId('compound-override'),
+};
+const compoundDay1 = 'compound-day-1';
+const compoundDay2 = 'compound-day-2';
+
+function compoundTrip(): Trip {
+  const stop = (id: StopId, name: string) => ({
+    id,
+    name,
+    latitude: 50,
+    longitude: 20,
+    priority: 'normal' as const,
+    canSkip: true,
+    plannedVisitMinutes: 10,
+  });
+  return {
+    id: 'compound-order-fixture',
+    title: 'Compound ordering fixture',
+    timeZone: 'UTC',
+    startDate: '2026-09-11',
+    endDate: '2026-09-12',
+    // Deliberately differs from both raw plan order and DayPlanItem.order.
+    stops: [
+      stop(compoundIds.c, 'C'),
+      stop(compoundIds.a, 'A'),
+      stop(compoundIds.b, 'B'),
+      stop(compoundIds.override, 'Override'),
+    ],
+    days: [
+      {
+        id: compoundDay1,
+        date: '2026-09-11',
+        plan: [
+          { stopId: compoundIds.b, order: 30 },
+          { stopId: compoundIds.c, order: 20 },
+          { stopId: compoundIds.a, order: 10 },
+        ],
+      },
+      {
+        id: compoundDay2,
+        date: '2026-09-12',
+        plan: [{ stopId: compoundIds.override, order: 10 }],
+      },
+    ],
+    rules: [],
+  };
+}
+
 function at(minute: number): string {
   return new Date(Date.parse(initializedAt) + minute * 60_000).toISOString();
 }
@@ -124,6 +177,12 @@ function activeWithKnownInbound(): TripExecutionState {
 
 function eventTypes(state: TripExecutionState): ExecutionEvent['type'][] {
   return state.eventLog.map((event) => event.type);
+}
+
+function savedStopIds(state: TripExecutionState): StopId[] {
+  return state.eventLog.flatMap((event) =>
+    event.type === 'stop_saved_for_later' ? [event.stopId] : [],
+  );
 }
 
 function oldEnvelope(version: 1 | 2, state: TripExecutionState): string {
@@ -283,7 +342,7 @@ void test('zero-work explicit End Day emits ended then completed, while Start al
   assert.equal(tripExecutionLifecycle(zeroTrip, ended).status, 'TRIP_COMPLETE');
 });
 
-void test('End Day save-all logs normal stops in trip order before lifecycle and no automatic cancels', () => {
+void test('End Day save-all logs normal stops in plan order before lifecycle and no automatic cancels', () => {
   let state = active();
   state = accepted(doNowStop(trip, state, ids.c, at(2)));
   state = accepted(doNowStop(trip, state, ids.d, at(3)));
@@ -498,6 +557,267 @@ void test('representative multi-day action history round-trips exactly and ends 
   );
   assert.equal(restored.status, 'restored');
   assert.deepEqual(restored.state.eventLog, state.eventLog);
+});
+
+void test('End Day Save-all follows immutable plan order across scrambled arrays and excludes overrides', () => {
+  const fixture = compoundTrip();
+  const rawPlanBefore = structuredClone(fixture.days[0].plan);
+  let state = accepted(
+    startDay(
+      fixture,
+      createInitialTripExecutionState(fixture, initializedAt),
+      compoundDay1,
+      at(1),
+    ),
+  );
+  state = accepted(doNowStop(fixture, state, compoundIds.override, at(2)));
+  const historyBefore = structuredClone(state.eventLog);
+  const completed = accepted(saveAllForLaterAndEndDay(fixture, state, at(3)));
+
+  assert.deepEqual(
+    fixture.stops.map((stop) => stop.id),
+    [compoundIds.c, compoundIds.a, compoundIds.b, compoundIds.override],
+  );
+  assert.deepEqual(
+    fixture.days[0].plan.map((item) => item.stopId),
+    [compoundIds.b, compoundIds.c, compoundIds.a],
+  );
+  assert.deepEqual(savedStopIds(completed), [
+    compoundIds.a,
+    compoundIds.c,
+    compoundIds.b,
+  ]);
+  assert.deepEqual(eventTypes(completed).slice(-5), [
+    'stop_saved_for_later',
+    'stop_saved_for_later',
+    'stop_saved_for_later',
+    'day_ended',
+    'day_completed',
+  ]);
+  assert.deepEqual(
+    completed.eventLog.slice(0, historyBefore.length),
+    historyBefore,
+  );
+  assert.equal(
+    completed.eventLog
+      .slice(historyBefore.length)
+      .every((event) => event.recordedAt === at(3)),
+    true,
+  );
+  assert.equal(
+    completed.eventLog.some(
+      (event) =>
+        event.type === 'stop_saved_for_later' &&
+        event.stopId === compoundIds.override,
+    ),
+    false,
+  );
+  assert.equal(
+    completed.eventLog.some((event) => event.type === 'stop_do_now_cancelled'),
+    false,
+  );
+  assert.equal(
+    completed.stopExecutions[compoundIds.override].scheduledDayId,
+    compoundDay2,
+  );
+  assert.deepEqual(fixture.days[0].plan, rawPlanBefore);
+});
+
+void test('two-stop B,A storage emits A,B for both End Day and day-switch Save-all', () => {
+  const base = compoundTrip();
+  const fixture: Trip = {
+    ...base,
+    stops: [base.stops[2], base.stops[1], base.stops[3]],
+    days: [
+      {
+        ...base.days[0],
+        plan: [
+          { stopId: compoundIds.b, order: 20 },
+          { stopId: compoundIds.a, order: 10 },
+        ],
+      },
+      base.days[1],
+    ],
+  };
+  const started = () =>
+    accepted(
+      startDay(
+        fixture,
+        createInitialTripExecutionState(fixture, initializedAt),
+        compoundDay1,
+        at(1),
+      ),
+    );
+
+  const ended = accepted(saveAllForLaterAndEndDay(fixture, started(), at(2)));
+  assert.deepEqual(savedStopIds(ended), [compoundIds.a, compoundIds.b]);
+
+  const switched = switchExecutionDay(
+    fixture,
+    started(),
+    compoundDay2,
+    at(2),
+    { status: 'known', minutes: 0 },
+    'save_all_for_later',
+  );
+  assert.equal(switched.status, 'switched');
+  assert.deepEqual(savedStopIds(switched.state), [
+    compoundIds.a,
+    compoundIds.b,
+  ]);
+});
+
+void test('day-switch Save-all uses old-day plan order and preserves accepted switch state', () => {
+  const fixture = compoundTrip();
+  let state = accepted(
+    startDay(
+      fixture,
+      createInitialTripExecutionState(fixture, initializedAt),
+      compoundDay1,
+      at(1),
+    ),
+  );
+  state = accepted(doNowStop(fixture, state, compoundIds.override, at(2)));
+  const historyBefore = structuredClone(state.eventLog);
+  const result = switchExecutionDay(
+    fixture,
+    state,
+    compoundDay2,
+    at(3),
+    { status: 'known', minutes: 0 },
+    'save_all_for_later',
+  );
+  assert.equal(result.status, 'switched');
+
+  assert.deepEqual(savedStopIds(result.state), [
+    compoundIds.a,
+    compoundIds.c,
+    compoundIds.b,
+  ]);
+  assert.deepEqual(eventTypes(result.state).slice(-5), [
+    'stop_saved_for_later',
+    'stop_saved_for_later',
+    'stop_saved_for_later',
+    'day_completed',
+    'day_started',
+  ]);
+  assert.deepEqual(
+    result.state.eventLog.slice(0, historyBefore.length),
+    historyBefore,
+  );
+  assert.equal(result.state.executionDayId, compoundDay2);
+  assert.equal(result.state.currentStopId, compoundIds.override);
+  assert.deepEqual(result.state.doNowQueue, []);
+  assert.deepEqual(result.state.completedDayIds, [compoundDay1]);
+  assert.deepEqual(
+    [compoundIds.a, compoundIds.c, compoundIds.b].map(
+      (stopId) => result.state.stopExecutions[stopId].scheduledDayId,
+    ),
+    [null, null, null],
+  );
+  assert.equal(
+    result.state.eventLog
+      .slice(historyBefore.length)
+      .every((event) => event.recordedAt === at(3)),
+    true,
+  );
+
+  const canonicalStorageTrip = {
+    ...fixture,
+    stops: [
+      fixture.stops[1],
+      fixture.stops[0],
+      fixture.stops[2],
+      fixture.stops[3],
+    ],
+  };
+  let canonicalState = accepted(
+    startDay(
+      canonicalStorageTrip,
+      createInitialTripExecutionState(canonicalStorageTrip, initializedAt),
+      compoundDay1,
+      at(1),
+    ),
+  );
+  canonicalState = accepted(
+    doNowStop(
+      canonicalStorageTrip,
+      canonicalState,
+      compoundIds.override,
+      at(2),
+    ),
+  );
+  const canonicalResult = switchExecutionDay(
+    canonicalStorageTrip,
+    canonicalState,
+    compoundDay2,
+    at(3),
+    { status: 'known', minutes: 0 },
+    'save_all_for_later',
+  );
+  assert.equal(canonicalResult.status, 'switched');
+  assert.deepEqual(canonicalResult.state, result.state);
+});
+
+void test('Current cursor position cannot override the compound plan-order batch', () => {
+  const fixture = compoundTrip();
+  fixture.days[0].plan = [
+    { stopId: compoundIds.c, order: 30 },
+    { stopId: compoundIds.a, order: 20 },
+    { stopId: compoundIds.b, order: 10 },
+  ];
+  const started = accepted(
+    startDay(
+      fixture,
+      createInitialTripExecutionState(fixture, initializedAt),
+      compoundDay1,
+      at(1),
+    ),
+  );
+  // Deliberately place the cursor on A while B remains eligible. Save-all has
+  // always accepted this input; this correction must only govern event order.
+  const currentA: TripExecutionState = {
+    ...started,
+    currentStopId: compoundIds.a,
+    currentInboundTravel: {
+      fromStopId: null,
+      toStopId: compoundIds.a,
+      duration: { status: 'unknown', reason: 'unresolved' },
+    },
+  };
+  const completed = accepted(
+    saveAllForLaterAndEndDay(fixture, currentA, at(2)),
+  );
+  assert.deepEqual(savedStopIds(completed), [
+    compoundIds.b,
+    compoundIds.a,
+    compoundIds.c,
+  ]);
+});
+
+void test('compound ordering correction leaves schema v3 and clean completed-day switch unchanged', () => {
+  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 3);
+  const fixture = compoundTrip();
+  const started = accepted(
+    startDay(
+      fixture,
+      createInitialTripExecutionState(fixture, initializedAt),
+      compoundDay1,
+      at(1),
+    ),
+  );
+  const completed = accepted(saveAllForLaterAndEndDay(fixture, started, at(2)));
+  const clean = switchExecutionDay(fixture, completed, compoundDay2, at(3), {
+    status: 'known',
+    minutes: 0,
+  });
+  assert.equal(clean.status, 'switched');
+  assert.deepEqual(eventTypes(clean.state).slice(-1), ['day_started']);
+  assert.equal(
+    clean.state.eventLog.filter((event) => event.type === 'day_completed')
+      .length,
+    1,
+  );
 });
 
 void test('Copenhagen remains one day with 16 stops and no Rome fixture is introduced', () => {

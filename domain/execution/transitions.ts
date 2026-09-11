@@ -778,11 +778,12 @@ export function saveAllForLaterAndEndDay(
   if (invalidTimestamp) return invalidTimestamp;
   const context = validateEndDayContext(trip, state);
   if (typeof context !== 'string') return context;
+  const day = trip.days.find((candidate) => candidate.id === context)!;
   const restored = withCancelledDoNowOverrides(state);
   const stopExecutions = { ...restored.stopExecutions };
   const savedEvents: ExecutionEvent[] = [];
-  for (const stop of trip.stops) {
-    const execution = stopExecutions[stop.id];
+  for (const item of orderedDayPlan(day)) {
+    const execution = stopExecutions[item.stopId];
     if (
       execution?.status === 'pending' &&
       execution.scheduledDayId === context
@@ -930,15 +931,15 @@ export function switchExecutionDay(
 
   // Restore temporary planning overrides before classifying normal leftovers.
   const restored = withCancelledDoNowOverrides(state);
-  const remainingStopIds = trip.stops
-    .filter((stop) => {
-      const execution = restored.stopExecutions[stop.id];
+  const remainingStopIds = orderedDayPlan(trip.days[oldDayIndex])
+    .filter((item) => {
+      const execution = restored.stopExecutions[item.stopId];
       return (
         execution.status === 'pending' &&
         execution.scheduledDayId === state.executionDayId
       );
     })
-    .map((stop) => stop.id);
+    .map((item) => item.stopId);
 
   if (remainingStopIds.length > 0 && resolution === undefined) {
     return {

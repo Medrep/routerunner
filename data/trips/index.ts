@@ -1,6 +1,7 @@
 import type { Trip } from '../../domain/index.ts';
 import { copenhagenTrip } from './copenhagen.ts';
 import { krakowField06Trip } from './krakow.ts';
+import { romeTrip } from './rome.ts';
 
 export const TRIP_QUERY_PARAMETER = 'trip';
 
@@ -12,6 +13,7 @@ export interface SelectableTrip {
 export const selectableTrips: readonly SelectableTrip[] = [
   { label: 'Copenhagen', trip: copenhagenTrip },
   { label: 'Kraków field test', trip: krakowField06Trip },
+  { label: 'Rome field test', trip: romeTrip },
 ];
 
 export function selectTrip(tripId: string | null | undefined): Trip {

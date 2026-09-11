@@ -14,6 +14,7 @@ import {
   krakowMitVisitPlanItemIds,
   krakowStopIds,
 } from '../../data/trips/krakow.ts';
+import { romeTrip } from '../../data/trips/rome.ts';
 import {
   completeCurrentStop,
   createInitialTripExecutionState,
@@ -325,14 +326,15 @@ void test('execution persistence excludes MIT internal items and stays isolated 
   assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 3);
 });
 
-void test('private-test trip selection defaults to Copenhagen and distinguishes Kraków', () => {
+void test('trip selection defaults to Copenhagen and distinguishes production fixtures', () => {
   assert.deepEqual(
     selectableTrips.map(({ trip }) => trip.id),
-    [copenhagenTrip.id, krakowField06Trip.id],
+    [copenhagenTrip.id, krakowField06Trip.id, romeTrip.id],
   );
   assert.equal(selectTrip(undefined), copenhagenTrip);
   assert.equal(selectTrip('unknown'), copenhagenTrip);
   assert.equal(selectTrip(krakowField06Trip.id), krakowField06Trip);
+  assert.equal(selectTrip(romeTrip.id), romeTrip);
   assert.equal(selectTripFromSearch(''), copenhagenTrip);
   assert.equal(
     selectTripFromSearch(`?trip=${krakowField06Trip.id}`),

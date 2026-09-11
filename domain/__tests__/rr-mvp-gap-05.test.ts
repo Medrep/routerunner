@@ -719,7 +719,7 @@ void test('switch accepts canonical unknown and zero inbound runtime values', ()
   });
 });
 
-void test('schema stays v2 and production wiring keeps preview and execution actions distinct', () => {
+void test('schema stays v2 and production wiring keeps day switching distinct from Stop actions', () => {
   assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 2);
   const source = readFileSync(
     new URL('../../app/page.tsx', import.meta.url),
@@ -739,5 +739,7 @@ void test('schema stays v2 and production wiring keeps preview and execution act
   assert.match(source, /leftover_resolution_required/);
   assert.match(source, /Save all for later/);
   assert.match(source, /Review individually/);
-  assert.doesNotMatch(source, /Cancel Do Now|Already Visited/);
+  assert.match(source, /cancelDoNowStop\(/);
+  assert.match(source, /markAlreadyVisited\(/);
+  assert.match(source, /deriveStopActionModel\(trip, execution, detail\)/);
 });

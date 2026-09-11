@@ -1,4 +1,7 @@
-import { orderedDayPlan } from '../execution/execution-order.ts';
+import {
+  isWaitingDoNow,
+  orderedDayPlan,
+} from '../execution/execution-order.ts';
 import { nextEligiblePendingStopId } from '../execution/transitions.ts';
 import { resolveWaypointSafeInboundLeg } from '../navigation/waypoint-safe-inbound-leg.ts';
 import type { ForegroundCoordinates } from '../location/foreground-location.ts';
@@ -9,6 +12,7 @@ export type RouteMapStopStatus =
   | 'completed'
   | 'current'
   | 'next'
+  | 'queued'
   | 'skipped'
   | 'saved'
   | 'future';
@@ -110,7 +114,23 @@ function deriveDayRouteMapView(
       latitude: point.latitude,
     })) ?? [];
   const orderedPlan = orderedDayPlan(day);
-  const stops = orderedPlan.flatMap<RouteMapStopView>((item, index) => {
+  const plannedStopIds = new Set(orderedPlan.map((item) => item.stopId));
+  const executionOverrideStopIds = includeExecutionContext
+    ? execution.doNowQueue
+        .map((entry) => entry.stopId)
+        .filter((stopId) => !plannedStopIds.has(stopId))
+    : [];
+  const presentedStops = [
+    ...orderedPlan.map((item, index) => ({
+      stopId: item.stopId,
+      itineraryPosition: index + 1,
+    })),
+    ...executionOverrideStopIds.map((stopId, index) => ({
+      stopId,
+      itineraryPosition: orderedPlan.length + index + 1,
+    })),
+  ];
+  const stops = presentedStops.flatMap<RouteMapStopView>((item) => {
     const stop = stopById.get(item.stopId);
     const stopExecution = execution.stopExecutions[item.stopId];
     if (!stop || !stopExecution) return [];
@@ -118,6 +138,8 @@ function deriveDayRouteMapView(
     let status: RouteMapStopStatus = 'future';
     if (includeExecutionContext && execution.currentStopId === item.stopId) {
       status = 'current';
+    } else if (isWaitingDoNow(execution, item.stopId)) {
+      status = 'queued';
     } else if (includeExecutionContext && nextStopId === item.stopId) {
       status = 'next';
     } else if (stopExecution.status === 'completed') status = 'completed';
@@ -135,7 +157,7 @@ function deriveDayRouteMapView(
         name: stop.name,
         latitude: stop.latitude,
         longitude: stop.longitude,
-        itineraryPosition: index + 1,
+        itineraryPosition: item.itineraryPosition,
         priority: stop.priority,
         canSkip: stop.canSkip,
         status,
@@ -143,7 +165,6 @@ function deriveDayRouteMapView(
     ];
   });
 
-  const plannedStopIds = new Set(orderedPlan.map((item) => item.stopId));
   const orderByStopId = new Map(
     orderedPlan.map((item, index) => [item.stopId, index]),
   );

@@ -742,6 +742,12 @@ body {
   border-width: 4px;
   border-color: #176b50;
 }
+.mapbox-stop-marker.queued {
+  border-color: #9a6b1f;
+  color: #735017;
+  background: #fff7df;
+  box-shadow: 0 0 0 4px #d9ad4c24;
+}
 .mapbox-stop-marker.completed {
   border-color: #829c8d;
   color: #466552;
@@ -1405,6 +1411,96 @@ body {
   border-style: dashed;
   color: #5d7565;
   border-radius: 7px;
+}
+.queued .itinerary-stop {
+  border: 1px solid #e0c88d;
+  background: #fffaf0;
+}
+.queued .stop-number {
+  border-color: #b98b36;
+  color: #795614;
+  background: #fff4d8;
+}
+.do-now-queue,
+.for-later {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid #d5ddd4;
+  border-radius: 13px;
+  background: #fff;
+}
+.do-now-queue {
+  border-color: #dfca96;
+  background: #fffcf5;
+}
+.do-now-queue .section-heading,
+.for-later .section-heading {
+  margin: 0 0 10px;
+}
+.do-now-queue .section-heading > div,
+.for-later .section-heading > div {
+  flex: 1;
+}
+.do-now-queue .section-heading .eyebrow,
+.for-later .section-heading .eyebrow {
+  margin-bottom: 4px;
+}
+.do-now-queue ol,
+.for-later ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.do-now-queue li + li,
+.for-later li + li {
+  border-top: 1px solid #e2e7df;
+}
+.do-now-queue li > button,
+.for-later li > button {
+  width: 100%;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 4px;
+  text-align: left;
+}
+.do-now-queue li > button > span {
+  width: 29px;
+  height: 29px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #b98b36;
+  border-radius: 50%;
+  color: #795614;
+  background: #fff4d8;
+  font-size: 13px;
+  font-weight: 750;
+}
+.do-now-queue li > button > div,
+.for-later li > button > div {
+  min-width: 0;
+  flex: 1;
+}
+.do-now-queue strong,
+.for-later strong,
+.do-now-queue small,
+.for-later small {
+  display: block;
+}
+.do-now-queue small,
+.for-later small,
+.for-later-intro {
+  color: #667269;
+  font-size: 12px;
+}
+.do-now-queue small,
+.for-later small {
+  margin-top: 3px;
+}
+.for-later-intro {
+  margin: -2px 0 8px;
 }
 .transit-row {
   margin-left: 26px;

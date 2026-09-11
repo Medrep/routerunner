@@ -439,7 +439,7 @@ void test('repeated overview derivation is deterministic and mutation-free', () 
   assert.deepEqual(state, stateBefore);
 });
 
-void test('production navigation keeps viewed-day selection presentation-only and gates preview mutations', () => {
+void test('production navigation keeps viewed-day selection presentation-only while Details uses execution authority', () => {
   const source = readFileSync(
     new URL('../../app/page.tsx', import.meta.url),
     'utf8',
@@ -457,6 +457,8 @@ void test('production navigation keeps viewed-day selection presentation-only an
   assert.match(source, /Preview · not executing/);
   assert.match(source, /Return to execution/);
   assert.match(source, /!isReadOnlyPreview &&[\s\S]*recommendation/);
-  assert.match(source, /!isReadOnlyPreview &&[\s\S]*canDoNowDetail/);
+  assert.match(source, /deriveStopActionModel\(trip, execution, detail\)/);
+  assert.match(source, /detailActionModel\?\.actions\.doNow/);
+  assert.match(source, /detailActionModel\?\.actions\.alreadyVisited/);
   assert.doesNotMatch(source, /localStorage/);
 });

@@ -32,6 +32,7 @@ export type TransitionErrorCode =
   | 'NEXT_EXECUTION_DAY_REQUIRED'
   | 'EXECUTION_STATE_INCOHERENT'
   | 'INVALID_SWITCH_TIMESTAMP'
+  | 'INVALID_TIMESTAMP'
   | 'INVALID_INBOUND_DURATION'
   | 'INVALID_SWITCH_RESOLUTION'
   | 'TRIP_COMPLETE'
@@ -100,6 +101,12 @@ function terminalFailure(
 ): TransitionFailure | undefined {
   if (isTripComplete(trip, state)) {
     return fail('TRIP_COMPLETE', 'Trip execution is complete.');
+  }
+}
+
+function runtimeTimestampFailure(now: string): TransitionFailure | undefined {
+  if (!isCanonicalIsoTimestamp(now)) {
+    return fail('INVALID_TIMESTAMP', 'The transition timestamp is invalid.');
   }
 }
 
@@ -437,6 +444,8 @@ export function doNowStop(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
+  const invalidTimestamp = runtimeTimestampFailure(now);
+  if (invalidTimestamp) return invalidTimestamp;
   const terminal = terminalFailure(trip, state);
   if (terminal) return terminal;
   if (!state.executionDayId) {
@@ -451,7 +460,7 @@ export function doNowStop(
   if (state.currentStopId === stopId) {
     return fail('STOP_IS_CURRENT', `${stop.name} is Current.`);
   }
-  if (isWaitingDoNow(state, stopId)) {
+  if (state.doNowQueue.some((entry) => entry.stopId === stopId)) {
     return fail('STOP_QUEUED', `${stop.name} is queued for Do Now.`);
   }
 
@@ -480,9 +489,104 @@ export function doNowStop(
         ? {
             fromStopId: null,
             toStopId: stopId,
-            duration: { status: 'unknown', reason: 'unresolved' },
+            duration: { status: 'unknown', reason: 'unavailable' },
           }
         : state.currentInboundTravel,
+      lastUpdatedAt: now,
+    },
+  };
+}
+
+/** Restores one waiting override to its exact captured planning context. */
+export function cancelDoNowStop(
+  trip: Trip,
+  state: TripExecutionState,
+  stopId: StopId,
+  now: string,
+): TransitionResult {
+  const mismatch = tripMatchesState(trip, state);
+  if (mismatch) return mismatch;
+  const invalidTimestamp = runtimeTimestampFailure(now);
+  if (invalidTimestamp) return invalidTimestamp;
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return terminal;
+  const stop = trip.stops.find((candidate) => candidate.id === stopId);
+  if (!stop) return fail('STOP_NOT_FOUND', `Stop ${stopId} does not exist.`);
+
+  const waitingEntry = waitingDoNowQueue(state).find(
+    (entry) => entry.stopId === stopId,
+  );
+  if (!waitingEntry) {
+    if (state.currentStopId === stopId) {
+      return fail('STOP_IS_CURRENT', `${stop.name} is Current.`);
+    }
+    return fail('STOP_QUEUED', `${stop.name} is not waiting for Do Now.`);
+  }
+
+  const execution = state.stopExecutions[stopId];
+  if (execution?.status !== 'pending') {
+    return fail('STOP_NOT_PENDING', `${stop.name} is no longer pending.`);
+  }
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      stopExecutions: {
+        ...state.stopExecutions,
+        [stopId]: {
+          ...execution,
+          scheduledDayId: waitingEntry.returnScheduledDayId,
+        },
+      },
+      doNowQueue: state.doNowQueue.filter((entry) => entry.stopId !== stopId),
+      lastUpdatedAt: now,
+    },
+  };
+}
+
+/** Records a pending non-Current, non-queued stop against the execution day. */
+export function markAlreadyVisited(
+  trip: Trip,
+  state: TripExecutionState,
+  stopId: StopId,
+  now: string,
+): TransitionResult {
+  const mismatch = tripMatchesState(trip, state);
+  if (mismatch) return mismatch;
+  const invalidTimestamp = runtimeTimestampFailure(now);
+  if (invalidTimestamp) return invalidTimestamp;
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return terminal;
+  if (!state.executionDayId) {
+    return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
+  }
+  const stop = trip.stops.find((candidate) => candidate.id === stopId);
+  if (!stop) return fail('STOP_NOT_FOUND', `Stop ${stopId} does not exist.`);
+  const execution = state.stopExecutions[stopId];
+  if (execution?.status !== 'pending') {
+    return fail('STOP_NOT_PENDING', `${stop.name} is no longer pending.`);
+  }
+  if (state.currentStopId === stopId) {
+    return fail('STOP_IS_CURRENT', `${stop.name} is Current.`);
+  }
+  if (state.doNowQueue.some((entry) => entry.stopId === stopId)) {
+    return fail('STOP_QUEUED', `${stop.name} is queued for Do Now.`);
+  }
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      stopExecutions: {
+        ...state.stopExecutions,
+        [stopId]: {
+          ...execution,
+          status: 'completed',
+          completedRecordedAt: now,
+          completedOnDayId: state.executionDayId,
+        },
+      },
       lastUpdatedAt: now,
     },
   };

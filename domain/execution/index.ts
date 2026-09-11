@@ -11,6 +11,16 @@ export {
 export { isTripComplete, tripExecutionLifecycle } from './lifecycle.ts';
 export type { TripExecutionLifecycle } from './lifecycle.ts';
 export {
+  deriveStopActionModel,
+  pendingForLaterActionModels,
+  waitingDoNowActionModels,
+} from './stop-actions.ts';
+export type {
+  StopActionEligibility,
+  StopActionModel,
+  StopExecutionRole,
+} from './stop-actions.ts';
+export {
   clearExecutionState,
   deserializeExecutionState,
   EXECUTION_STATE_SCHEMA_VERSION,
@@ -23,11 +33,13 @@ export {
 export {
   acceptSkipRecommendation,
   acknowledgeRuleRecommendation,
+  cancelDoNowStop,
   completeCurrentStop,
   doNowStop,
   endDay,
   firstEligiblePendingStopId,
   nextEligiblePendingStopId,
+  markAlreadyVisited,
   reopenCompletedDay,
   saveAllForLaterAndEndDay,
   saveCurrentForLater,

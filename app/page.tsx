@@ -17,6 +17,7 @@ import {
   Expand,
   Flag,
   Footprints,
+  ListOrdered,
   MapPin,
   Navigation,
   Plane,
@@ -69,16 +70,20 @@ import {
   acceptSkipRecommendation,
   acknowledgeRuleRecommendation,
   activeExecutionRecommendation,
+  cancelDoNowStop,
   completeCurrentStop,
   currentGoogleMapsNavigationUrl,
   deriveDayPreviewRouteMapView,
   deriveRouteMapView,
+  deriveStopActionModel,
   doNowStop,
   endDay,
   isWaitingDoNow,
+  markAlreadyVisited,
   nextEligiblePendingStopId,
   orderedDayPlan,
   persistExecutionTransition,
+  pendingForLaterActionModels,
   postDayGoogleMapsNavigationUrl,
   projectSchedule,
   restoreOrCreateExecutionState,
@@ -89,6 +94,7 @@ import {
   switchExecutionDay,
   shouldRefreshScheduleProjection,
   tripExecutionLifecycle,
+  waitingDoNowActionModels,
   type RouteMapStopStatus,
   type KnownOrUnknownDuration,
   type Stop,
@@ -365,20 +371,31 @@ function ExecutionPage() {
   const nextStop = trip.stops.find((stop) => stop.id === nextStopId) ?? null;
   const nextPlanItem = plannedStopPresentation(dayPlanModel, nextStopId);
   const detailStop = trip.stops.find((stop) => stop.id === detail) ?? null;
-  const detailExecution = detail ? execution.stopExecutions[detail] : undefined;
-  const canDoNowDetail = Boolean(
-    !isReadOnlyPreview &&
-    detail &&
-    execution.executionDayId &&
-    lifecycle.status !== 'TRIP_COMPLETE' &&
-    detail !== execution.currentStopId &&
-    detailExecution?.status === 'pending' &&
-    !isWaitingDoNow(execution, detail),
-  );
-  const detailPlanItem = plannedStopPresentation(dayPlanModel, detail);
-  const detailHistory = detail
-    ? viewedDay.stops.find((stop) => stop.stopId === detail)
+  const detailActionModel = detail
+    ? deriveStopActionModel(trip, execution, detail)
     : undefined;
+  const detailPlannedDay = detail
+    ? overview.days.find((candidate) =>
+        candidate.stops.some((stop) => stop.stopId === detail),
+      )
+    : undefined;
+  const detailHistory = detailPlannedDay?.stops.find(
+    (stop) => stop.stopId === detail,
+  );
+  const detailPlanItem = detailPlannedDay
+    ? plannedStopPresentation(
+        dayPlanPresentationModel(detailPlannedDay.day, trip.stops),
+        detail,
+      )
+    : null;
+  const waitingDoNowModels = useMemo(
+    () => waitingDoNowActionModels(trip, execution),
+    [execution, trip],
+  );
+  const forLaterModels = useMemo(
+    () => pendingForLaterActionModels(trip, execution),
+    [execution, trip],
+  );
   const completed = viewedDay.completedStopCount;
   const noAvailableCurrent = started && current === null;
   const scheduleProjection = useMemo(
@@ -411,6 +428,7 @@ function ExecutionPage() {
     const stopExecution = execution.stopExecutions[stopId];
     if (!isReadOnlyPreview && execution.currentStopId === stopId)
       return 'current';
+    if (isWaitingDoNow(execution, stopId)) return 'queued';
     if (!isReadOnlyPreview && nextStopId === stopId && started) return 'next';
     if (stopExecution.status === 'completed') return 'completed';
     if (stopExecution.status === 'skipped') return 'skipped';
@@ -624,6 +642,25 @@ function ExecutionPage() {
         state.currentStopId === detail
           ? `${stopName} is now Current.`
           : `${stopName} queued for now.`,
+    );
+    setDetail(null);
+  }
+
+  function cancelSelectedDoNow() {
+    if (!detail) return;
+    const stopName = detailStop?.name ?? 'Stop';
+    apply(
+      cancelDoNowStop(trip, execution, detail, new Date().toISOString()),
+      () => `${stopName} removed from the Do Now queue.`,
+    );
+  }
+
+  function markSelectedAlreadyVisited() {
+    if (!detail) return;
+    const stopName = detailStop?.name ?? 'Stop';
+    apply(
+      markAlreadyVisited(trip, execution, detail, new Date().toISOString()),
+      () => `${stopName} recorded as already visited.`,
     );
     setDetail(null);
   }
@@ -943,7 +980,10 @@ function ExecutionPage() {
                     {isReadOnlyPreview
                       ? `${viewedDay.label.toUpperCase()} PREVIEW`
                       : current
-                        ? 'NOW'
+                        ? deriveStopActionModel(trip, execution, current.id)
+                            ?.role === 'current_do_now'
+                          ? 'NOW · DOING TODAY'
+                          : 'NOW'
                         : lifecycle.status === 'TRIP_COMPLETE'
                           ? 'TRIP COMPLETE'
                           : lifecycle.status === 'DAY_COMPLETE'
@@ -1242,6 +1282,40 @@ function ExecutionPage() {
                     </div>
                   )}
               </section>
+              {!isReadOnlyPreview && waitingDoNowModels.length > 0 && (
+                <section className="do-now-queue" aria-label="Queued for now">
+                  <div className="section-heading">
+                    <div>
+                      <p className="eyebrow">QUEUED FOR NOW</p>
+                      <h2>After Current</h2>
+                    </div>
+                    <ListOrdered size={20} aria-hidden="true" />
+                  </div>
+                  <ol>
+                    {waitingDoNowModels.map((model) => {
+                      const stop = trip.stops.find(
+                        (candidate) => candidate.id === model.stopId,
+                      );
+                      if (!stop) return null;
+                      return (
+                        <li key={stop.id}>
+                          <button
+                            type="button"
+                            onClick={() => setDetail(stop.id)}
+                          >
+                            <span>{model.queuePosition}</span>
+                            <div>
+                              <strong>{stop.name}</strong>
+                              <small>Queued for now · FIFO</small>
+                            </div>
+                            <ChevronRight size={17} />
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </section>
+              )}
               {endDayResolutionOpen && !isReadOnlyPreview && (
                 <section
                   className="end-day-resolution"
@@ -1441,11 +1515,14 @@ function ExecutionPage() {
                                 ? 'Skipped'
                                 : status === 'saved'
                                   ? 'Saved for later'
-                                  : status === 'completed'
-                                    ? modelStopHistory(stop.id)?.completedEarly
-                                      ? `Visited on ${modelStopHistory(stop.id)?.completedOnDayLabel ?? 'another day'}`
-                                      : 'Visited'
-                                    : `${stop.plannedVisitMinutes} min · ${priorityLabel(stop)}`}
+                                  : status === 'queued'
+                                    ? `Queued for now · position ${deriveStopActionModel(trip, execution, stop.id)?.queuePosition}`
+                                    : status === 'completed'
+                                      ? modelStopHistory(stop.id)
+                                          ?.completedEarly
+                                        ? `Visited on ${modelStopHistory(stop.id)?.completedOnDayLabel ?? 'another day'}`
+                                        : 'Visited'
+                                      : `${stop.plannedVisitMinutes} min · ${priorityLabel(stop)}`}
                             </span>
                           </div>
                           {status === 'current' ? (
@@ -1481,6 +1558,51 @@ function ExecutionPage() {
                   )}
                 </div>
               </section>
+              {forLaterModels.length > 0 && (
+                <section className="for-later" aria-label="For later">
+                  <div className="section-heading">
+                    <div>
+                      <p className="eyebrow">TRIP-LEVEL</p>
+                      <h2>For later</h2>
+                    </div>
+                    <span>{forLaterModels.length} pending</span>
+                  </div>
+                  <p className="for-later-intro">
+                    Unscheduled stops kept outside the active route.
+                  </p>
+                  <ul>
+                    {forLaterModels.map((model) => {
+                      const stop = trip.stops.find(
+                        (candidate) => candidate.id === model.stopId,
+                      );
+                      const originalDay = overview.days.find((candidate) =>
+                        candidate.stops.some(
+                          (planned) => planned.stopId === model.stopId,
+                        ),
+                      );
+                      if (!stop) return null;
+                      return (
+                        <li key={stop.id}>
+                          <button
+                            type="button"
+                            onClick={() => setDetail(stop.id)}
+                          >
+                            <div>
+                              <strong>{stop.name}</strong>
+                              <small>
+                                {originalDay
+                                  ? `Originally ${originalDay.label}`
+                                  : 'Not assigned to a planned day'}
+                              </small>
+                            </div>
+                            <ChevronRight size={17} />
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              )}
             </div>
           </div>
         )}
@@ -1530,9 +1652,13 @@ function ExecutionPage() {
             <>
               <div className="sheet-top">
                 <span className="eyebrow">
-                  STOP {planNumber(detailStop.id) ?? '—'} OF{' '}
-                  {dayPlanModel.length} ·{' '}
-                  {presentationStatus(detailStop.id).toUpperCase()}
+                  {detailPlannedDay
+                    ? `${detailPlannedDay.label.toUpperCase()} · STOP ${detailHistory?.itineraryPosition ?? '—'} OF ${detailPlannedDay.plannedStopCount}`
+                    : 'TRIP STOP'}{' '}
+                  · {detailActionModel?.statusLabel.toUpperCase()}
+                  {detailActionModel?.queuePosition
+                    ? ` · QUEUE ${detailActionModel.queuePosition}`
+                    : ''}
                 </span>
                 <SheetClose
                   className="sheet-close"
@@ -1562,10 +1688,14 @@ function ExecutionPage() {
                     {detailHistory.completedOnDayLabel}
                   </>
                 )}
+                {detailActionModel?.role === 'waiting_do_now' && (
+                  <> · Doing today under the active execution day</>
+                )}
               </SheetDescription>
               <StopVisitContent stop={detailStop} surface="details" />
               {detailStop.id === copenhagenStopIds.kastellet && (
                 <figure className="stop-photo">
+                  {/* oxlint-disable-next-line next/no-img-element -- fixed credited Wikimedia fixture image */}
                   <img
                     src="https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Kastellet_aerial.jpg/1280px-Kastellet_aerial.jpg"
                     alt="Aerial view of Kastellet’s star-shaped green ramparts and moat in Copenhagen."
@@ -1603,9 +1733,22 @@ function ExecutionPage() {
                   </div>
                 )}
               <div className="actions">
-                {canDoNowDetail && (
+                {detailActionModel?.actions.cancelDoNow && (
+                  <button className="primary" onClick={cancelSelectedDoNow}>
+                    <X size={20} /> Cancel Do Now
+                  </button>
+                )}
+                {detailActionModel?.actions.doNow && (
                   <button className="primary" onClick={doNowSelectedStop}>
                     <ArrowRight size={20} /> Do now
+                  </button>
+                )}
+                {detailActionModel?.actions.alreadyVisited && (
+                  <button
+                    className="secondary"
+                    onClick={markSelectedAlreadyVisited}
+                  >
+                    <Check size={20} /> Already visited
                   </button>
                 )}
                 {!isReadOnlyPreview &&
@@ -1621,40 +1764,36 @@ function ExecutionPage() {
                       <ArrowRight size={20} /> Start day
                     </button>
                   )}
-                {!isReadOnlyPreview &&
-                  started &&
-                  detail === execution.currentStopId &&
-                  current && (
-                    <>
-                      {navigationUrl && (
-                        <a className="secondary" href={navigationUrl}>
-                          <Navigation size={20} /> Navigate
-                        </a>
-                      )}
-                      <button className="primary" onClick={done}>
-                        <Check size={20} /> Done
-                      </button>
-                    </>
-                  )}
-                {(isReadOnlyPreview ||
-                  detail !== execution.currentStopId ||
-                  !started) && (
+                {detailActionModel?.actions.done && current && (
+                  <>
+                    {detailActionModel.actions.navigate && navigationUrl && (
+                      <a className="secondary" href={navigationUrl}>
+                        <Navigation size={20} /> Navigate
+                      </a>
+                    )}
+                    <button className="primary" onClick={done}>
+                      <Check size={20} /> Done
+                    </button>
+                  </>
+                )}
+                {!detailActionModel?.actions.done && (
                   <SheetClose className="primary">
                     {isReadOnlyPreview ? 'Back to preview' : 'Back to day'}
                   </SheetClose>
                 )}
               </div>
-              {!isReadOnlyPreview &&
-                started &&
-                detail === execution.currentStopId &&
-                current && (
-                  <div className="sheet-secondary-actions">
-                    {current.canSkip && <button onClick={skip}>Skip</button>}
+              {detailActionModel?.actions.done && current && (
+                <div className="sheet-secondary-actions">
+                  {detailActionModel.actions.skip && (
+                    <button onClick={skip}>Skip</button>
+                  )}
+                  {detailActionModel.actions.saveForLater && (
                     <button onClick={saveCurrentForLater}>
                       Save for later
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
+              )}
             </>
           )}
         </SheetContent>

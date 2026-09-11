@@ -296,7 +296,7 @@ void test('Done never reselects completed stops and final Done naturally complet
     const result = completeCurrentStop(
       copenhagenTrip,
       state,
-      `2026-09-08T0${9 + Math.floor(index / 2)}:${index}0:00.000Z`,
+      new Date(Date.parse(startedAt) + (index + 1) * 60_000).toISOString(),
     );
     assert.equal(result.ok, true);
     state = result.state;

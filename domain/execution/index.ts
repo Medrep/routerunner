@@ -40,6 +40,7 @@ export {
   firstEligiblePendingStopId,
   nextEligiblePendingStopId,
   markAlreadyVisited,
+  recordDecisionShown,
   reopenCompletedDay,
   saveAllForLaterAndEndDay,
   saveCurrentForLater,
@@ -57,6 +58,7 @@ export type {
 export type {
   CurrentInboundTravel,
   DoNowQueueEntry,
+  ExecutionEvent,
   KnownOrUnknownDuration,
   RuleAcknowledgement,
   StopExecution,

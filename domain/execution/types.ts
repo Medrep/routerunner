@@ -74,6 +74,48 @@ export interface RuleAcknowledgement {
   acknowledgedAt: string;
 }
 
+type ExecutionEventBase<TType extends string> = {
+  /** Version of the bounded event payload contract, independent of storage. */
+  version: 1;
+  type: TType;
+  recordedAt: string;
+  executionDayId: string;
+};
+
+type StopExecutionEvent<TType extends string> = ExecutionEventBase<TType> & {
+  stopId: StopId;
+};
+
+type DecisionExecutionEvent<TType extends string> =
+  ExecutionEventBase<TType> & {
+    ruleId: string;
+    severity: 'SCHEDULE_TIGHT' | 'DEADLINE_AT_RISK';
+    targetStopId: StopId;
+  };
+
+/**
+ * Persisted, append-only local execution history. Array order is canonical;
+ * events deliberately have no separate identity in the local MVP.
+ */
+export type ExecutionEvent =
+  | ExecutionEventBase<'day_started'>
+  | StopExecutionEvent<'stop_completed'>
+  | StopExecutionEvent<'stop_skipped'>
+  | StopExecutionEvent<'stop_saved_for_later'>
+  | (StopExecutionEvent<'stop_do_now'> & {
+      returnScheduledDayId: string | null;
+    })
+  | (StopExecutionEvent<'stop_do_now_cancelled'> & {
+      restoredScheduledDayId: string | null;
+    })
+  | StopExecutionEvent<'stop_already_visited'>
+  | DecisionExecutionEvent<'decision_shown'>
+  | DecisionExecutionEvent<'decision_accepted'>
+  | DecisionExecutionEvent<'decision_rejected'>
+  | ExecutionEventBase<'day_completed'>
+  | ExecutionEventBase<'day_reopened'>
+  | ExecutionEventBase<'day_ended'>;
+
 /** Trip-owned runtime state; a viewed day is intentionally absent. */
 export interface TripExecutionState {
   tripId: string;
@@ -91,5 +133,6 @@ export interface TripExecutionState {
   /** Day IDs are unique; ordering is not execution ownership. */
   completedDayIds: string[];
   ruleAcknowledgements: RuleAcknowledgement[];
+  eventLog: ExecutionEvent[];
   lastUpdatedAt: string;
 }

@@ -276,7 +276,7 @@ void test('execution persistence version excludes static planned times', () => {
   const serialized = storage.getItem(executionStorageKey(krakowField06Trip.id));
 
   assert.equal(result.status, 'saved');
-  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 2);
+  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 3);
   assert.ok(serialized);
   assert.equal(serialized.includes('plannedStartTime'), false);
   assert.equal(serialized.includes('13:10'), false);

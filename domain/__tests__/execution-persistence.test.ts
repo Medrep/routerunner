@@ -245,9 +245,10 @@ void test('migrates version 1 execution progress only when legacy acknowledgemen
   const state = activeState();
   const envelope = savedEnvelope(state);
   envelope.version = 1;
+  const migratedState = { ...state, eventLog: [] };
   assert.deepEqual(
     deserializeExecutionState(JSON.stringify(envelope), copenhagenTrip),
-    { status: 'restored', state, savedAt: state.lastUpdatedAt },
+    { status: 'restored', state: migratedState, savedAt: state.lastUpdatedAt },
   );
 
   envelope.state.ruleAcknowledgements = [

@@ -719,8 +719,8 @@ void test('switch accepts canonical unknown and zero inbound runtime values', ()
   });
 });
 
-void test('schema stays v2 and production wiring keeps day switching distinct from Stop actions', () => {
-  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 2);
+void test('schema stays versioned and production wiring keeps day switching distinct from Stop actions', () => {
+  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 3);
   const source = readFileSync(
     new URL('../../app/page.tsx', import.meta.url),
     'utf8',

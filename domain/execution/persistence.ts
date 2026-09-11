@@ -2,6 +2,7 @@ import type { StopId, Trip } from '../trip/types.ts';
 import type {
   CurrentInboundTravel,
   DoNowQueueEntry,
+  ExecutionEvent,
   KnownOrUnknownDuration,
   RuleAcknowledgement,
   StopExecution,
@@ -13,7 +14,8 @@ import { createInitialTripExecutionState } from './create-execution-state.ts';
 import { hasCoherentExecutionStateRelationships } from './transitions.ts';
 import type { TransitionError, TransitionResult } from './transitions.ts';
 
-export const EXECUTION_STATE_SCHEMA_VERSION = 2;
+export const EXECUTION_STATE_SCHEMA_VERSION = 3;
+const PREVIOUS_EXECUTION_STATE_SCHEMA_VERSION = 2;
 const LEGACY_EXECUTION_STATE_SCHEMA_VERSION = 1;
 
 export interface ExecutionStateEnvelope {
@@ -73,6 +75,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function optionalValue(record: Record<string, unknown>, key: string): unknown {
   return Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  );
 }
 
 function canonicalDayId(
@@ -168,9 +179,115 @@ function stopExecutionFromUnknown(
   return execution;
 }
 
+function executionEventFromUnknown(
+  value: unknown,
+  stopIds: ReadonlyMap<string, StopId>,
+  dayIds: ReadonlySet<string>,
+  rulesById: ReadonlyMap<string, NonNullable<Trip['rules']>[number]>,
+): ExecutionEvent | undefined {
+  if (
+    !isRecord(value) ||
+    value.version !== 1 ||
+    typeof value.type !== 'string' ||
+    !isCanonicalIsoTimestamp(value.recordedAt) ||
+    typeof value.executionDayId !== 'string' ||
+    !dayIds.has(value.executionDayId)
+  ) {
+    return undefined;
+  }
+
+  const baseKeys = ['version', 'type', 'recordedAt', 'executionDayId'];
+  const base = {
+    version: 1 as const,
+    recordedAt: value.recordedAt,
+    executionDayId: value.executionDayId,
+  };
+  if (
+    value.type === 'day_started' ||
+    value.type === 'day_completed' ||
+    value.type === 'day_reopened' ||
+    value.type === 'day_ended'
+  ) {
+    return hasExactKeys(value, baseKeys)
+      ? { ...base, type: value.type }
+      : undefined;
+  }
+
+  if (
+    value.type === 'decision_shown' ||
+    value.type === 'decision_accepted' ||
+    value.type === 'decision_rejected'
+  ) {
+    const rule =
+      typeof value.ruleId === 'string'
+        ? rulesById.get(value.ruleId)
+        : undefined;
+    const targetStopId =
+      typeof value.targetStopId === 'string'
+        ? stopIds.get(value.targetStopId)
+        : undefined;
+    if (
+      !rule ||
+      rule.dayId !== value.executionDayId ||
+      !targetStopId ||
+      rule.action.stopId !== targetStopId ||
+      (value.severity !== 'SCHEDULE_TIGHT' &&
+        value.severity !== 'DEADLINE_AT_RISK') ||
+      !hasExactKeys(value, [...baseKeys, 'ruleId', 'severity', 'targetStopId'])
+    ) {
+      return undefined;
+    }
+    return {
+      ...base,
+      type: value.type,
+      ruleId: rule.id,
+      severity: value.severity,
+      targetStopId,
+    };
+  }
+
+  const stopId =
+    typeof value.stopId === 'string' ? stopIds.get(value.stopId) : undefined;
+  if (!stopId) return undefined;
+  const stopKeys = [...baseKeys, 'stopId'];
+  if (
+    value.type === 'stop_completed' ||
+    value.type === 'stop_skipped' ||
+    value.type === 'stop_saved_for_later' ||
+    value.type === 'stop_already_visited'
+  ) {
+    return hasExactKeys(value, stopKeys)
+      ? { ...base, type: value.type, stopId }
+      : undefined;
+  }
+  if (value.type === 'stop_do_now') {
+    const returnScheduledDayId =
+      value.returnScheduledDayId === null
+        ? null
+        : canonicalDayId(value.returnScheduledDayId, dayIds);
+    return returnScheduledDayId !== undefined &&
+      hasExactKeys(value, [...stopKeys, 'returnScheduledDayId'])
+      ? { ...base, type: value.type, stopId, returnScheduledDayId }
+      : undefined;
+  }
+  if (value.type === 'stop_do_now_cancelled') {
+    const restoredScheduledDayId =
+      value.restoredScheduledDayId === null
+        ? null
+        : canonicalDayId(value.restoredScheduledDayId, dayIds);
+    return restoredScheduledDayId !== undefined &&
+      hasExactKeys(value, [...stopKeys, 'restoredScheduledDayId'])
+      ? { ...base, type: value.type, stopId, restoredScheduledDayId }
+      : undefined;
+  }
+
+  return undefined;
+}
+
 function stateFromUnknown(
   value: unknown,
   trip: Trip,
+  migrateWithoutEventLog = false,
 ): TripExecutionState | undefined {
   if (!isRecord(value) || value.tripId !== trip.id) return undefined;
 
@@ -299,7 +416,33 @@ function stateFromUnknown(
     });
   }
 
+  const eventLog: ExecutionEvent[] = [];
+  if (!migrateWithoutEventLog) {
+    if (!Array.isArray(value.eventLog)) return undefined;
+    let priorRecordedAt = Number.NEGATIVE_INFINITY;
+    for (const rawEvent of value.eventLog) {
+      const event = executionEventFromUnknown(
+        rawEvent,
+        stopIds,
+        dayIds,
+        rulesById,
+      );
+      if (!event) return undefined;
+      const recordedAt = new Date(event.recordedAt).valueOf();
+      if (recordedAt < priorRecordedAt) return undefined;
+      priorRecordedAt = recordedAt;
+      eventLog.push(event);
+    }
+  }
+
   if (!isCanonicalIsoTimestamp(value.lastUpdatedAt)) return undefined;
+  if (
+    eventLog.length > 0 &&
+    new Date(eventLog.at(-1)!.recordedAt).valueOf() >
+      new Date(value.lastUpdatedAt).valueOf()
+  ) {
+    return undefined;
+  }
 
   const state: TripExecutionState = {
     tripId: trip.id,
@@ -307,6 +450,7 @@ function stateFromUnknown(
     doNowQueue,
     completedDayIds,
     ruleAcknowledgements,
+    eventLog,
     lastUpdatedAt: value.lastUpdatedAt,
   };
   if (executionDayId !== undefined) state.executionDayId = executionDayId;
@@ -364,6 +508,7 @@ export function deserializeExecutionState(
   }
   if (
     parsed.version !== EXECUTION_STATE_SCHEMA_VERSION &&
+    parsed.version !== PREVIOUS_EXECUTION_STATE_SCHEMA_VERSION &&
     parsed.version !== LEGACY_EXECUTION_STATE_SCHEMA_VERSION
   ) {
     return {
@@ -398,7 +543,11 @@ export function deserializeExecutionState(
     }
   }
 
-  const state = stateFromUnknown(parsed.state, trip);
+  const state = stateFromUnknown(
+    parsed.state,
+    trip,
+    parsed.version !== EXECUTION_STATE_SCHEMA_VERSION,
+  );
   if (!state) {
     return {
       status: 'invalid',

@@ -264,7 +264,7 @@ void test('viewedDayId is transient, absent from state/schema, and defaults to e
   const active = activeDayOne(trip);
   const stateKeys = Object.keys(active);
 
-  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 2);
+  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 3);
   assert.equal(stateKeys.includes('viewedDayId'), false);
   assert.equal(defaultViewedDayId(trip, active), dayOneId);
   assert.equal(resolveViewedDayId(trip, active, 'missing'), dayOneId);

@@ -15,6 +15,7 @@ import {
 } from './execution-order.ts';
 import { isCanonicalIsoTimestamp, isKnownOrUnknownDuration } from './types.ts';
 import type {
+  ExecutionEvent,
   KnownOrUnknownDuration,
   StopExecution,
   TripExecutionState,
@@ -104,10 +105,32 @@ function terminalFailure(
   }
 }
 
-function runtimeTimestampFailure(now: string): TransitionFailure | undefined {
+function runtimeTimestampFailure(
+  state: TripExecutionState,
+  now: string,
+): TransitionFailure | undefined {
   if (!isCanonicalIsoTimestamp(now)) {
     return fail('INVALID_TIMESTAMP', 'The transition timestamp is invalid.');
   }
+  const priorEvent = state.eventLog.at(-1);
+  if (
+    priorEvent &&
+    new Date(now).valueOf() < new Date(priorEvent.recordedAt).valueOf()
+  ) {
+    return fail(
+      'INVALID_TIMESTAMP',
+      'The transition timestamp precedes existing execution history.',
+    );
+  }
+}
+
+function appendEvents(
+  state: TripExecutionState,
+  ...events: ExecutionEvent[]
+): TripExecutionState {
+  return events.length === 0
+    ? state
+    : { ...state, eventLog: [...state.eventLog, ...events] };
 }
 
 /** Returns the first pending stop in canonical numeric plan order. */
@@ -353,7 +376,7 @@ function withCompletedDay(
   now: string,
 ): TripExecutionState {
   const dayId = state.executionDayId!;
-  return {
+  const completed = {
     ...state,
     currentStopId: undefined,
     currentStepStartedAt: undefined,
@@ -362,6 +385,14 @@ function withCompletedDay(
     completedDayIds: [...new Set([...state.completedDayIds, dayId])],
     lastUpdatedAt: now,
   };
+  return state.completedDayIds.includes(dayId)
+    ? completed
+    : appendEvents(completed, {
+        version: 1,
+        type: 'day_completed',
+        executionDayId: dayId,
+        recordedAt: now,
+      });
 }
 
 function hasEligibleExecutionWork(state: TripExecutionState): boolean {
@@ -397,6 +428,8 @@ export function startDay(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
+  if (invalidTimestamp) return invalidTimestamp;
   const terminal = terminalFailure(trip, state);
   if (terminal) return terminal;
 
@@ -417,21 +450,29 @@ export function startDay(
   const currentStopId = firstEligiblePendingStopId(trip, state, day.id);
   return {
     ok: true,
-    state: {
-      ...state,
-      executionDayId: day.id,
-      executionDayStartedAt: now,
-      currentStopId,
-      currentStepStartedAt: currentStopId ? now : undefined,
-      currentInboundTravel: currentStopId
-        ? {
-            fromStopId: null,
-            toStopId: currentStopId,
-            duration: { status: 'unknown', reason: 'unresolved' },
-          }
-        : undefined,
-      lastUpdatedAt: now,
-    },
+    state: appendEvents(
+      {
+        ...state,
+        executionDayId: day.id,
+        executionDayStartedAt: now,
+        currentStopId,
+        currentStepStartedAt: currentStopId ? now : undefined,
+        currentInboundTravel: currentStopId
+          ? {
+              fromStopId: null,
+              toStopId: currentStopId,
+              duration: { status: 'unknown', reason: 'unresolved' },
+            }
+          : undefined,
+        lastUpdatedAt: now,
+      },
+      {
+        version: 1,
+        type: 'day_started',
+        executionDayId: day.id,
+        recordedAt: now,
+      },
+    ),
   };
 }
 
@@ -444,7 +485,7 @@ export function doNowStop(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
-  const invalidTimestamp = runtimeTimestampFailure(now);
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
   if (invalidTimestamp) return invalidTimestamp;
   const terminal = terminalFailure(trip, state);
   if (terminal) return terminal;
@@ -465,35 +506,56 @@ export function doNowStop(
   }
 
   const becomesCurrent = state.currentStopId === undefined;
+  const executionDayId = state.executionDayId;
+  const events: ExecutionEvent[] = [];
+  if (state.completedDayIds.includes(executionDayId)) {
+    events.push({
+      version: 1,
+      type: 'day_reopened',
+      executionDayId,
+      recordedAt: now,
+    });
+  }
+  events.push({
+    version: 1,
+    type: 'stop_do_now',
+    stopId,
+    executionDayId,
+    returnScheduledDayId: execution.scheduledDayId,
+    recordedAt: now,
+  });
   return {
     ok: true,
-    state: {
-      ...state,
-      completedDayIds: state.completedDayIds.filter(
-        (dayId) => dayId !== state.executionDayId,
-      ),
-      stopExecutions: {
-        ...state.stopExecutions,
-        [stopId]: {
-          ...execution,
-          scheduledDayId: state.executionDayId,
+    state: appendEvents(
+      {
+        ...state,
+        completedDayIds: state.completedDayIds.filter(
+          (dayId) => dayId !== state.executionDayId,
+        ),
+        stopExecutions: {
+          ...state.stopExecutions,
+          [stopId]: {
+            ...execution,
+            scheduledDayId: state.executionDayId,
+          },
         },
+        doNowQueue: [
+          ...state.doNowQueue,
+          { stopId, returnScheduledDayId: execution.scheduledDayId },
+        ],
+        currentStopId: becomesCurrent ? stopId : state.currentStopId,
+        currentStepStartedAt: becomesCurrent ? now : state.currentStepStartedAt,
+        currentInboundTravel: becomesCurrent
+          ? {
+              fromStopId: null,
+              toStopId: stopId,
+              duration: { status: 'unknown', reason: 'unavailable' },
+            }
+          : state.currentInboundTravel,
+        lastUpdatedAt: now,
       },
-      doNowQueue: [
-        ...state.doNowQueue,
-        { stopId, returnScheduledDayId: execution.scheduledDayId },
-      ],
-      currentStopId: becomesCurrent ? stopId : state.currentStopId,
-      currentStepStartedAt: becomesCurrent ? now : state.currentStepStartedAt,
-      currentInboundTravel: becomesCurrent
-        ? {
-            fromStopId: null,
-            toStopId: stopId,
-            duration: { status: 'unknown', reason: 'unavailable' },
-          }
-        : state.currentInboundTravel,
-      lastUpdatedAt: now,
-    },
+      ...events,
+    ),
   };
 }
 
@@ -512,7 +574,7 @@ export function cancelDoNowStop(
       'The current execution state is not coherent enough to cancel Do Now.',
     );
   }
-  const invalidTimestamp = runtimeTimestampFailure(now);
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
   if (invalidTimestamp) return invalidTimestamp;
   const terminal = terminalFailure(trip, state);
   if (terminal) return terminal;
@@ -536,18 +598,28 @@ export function cancelDoNowStop(
 
   return {
     ok: true,
-    state: {
-      ...state,
-      stopExecutions: {
-        ...state.stopExecutions,
-        [stopId]: {
-          ...execution,
-          scheduledDayId: waitingEntry.returnScheduledDayId,
+    state: appendEvents(
+      {
+        ...state,
+        stopExecutions: {
+          ...state.stopExecutions,
+          [stopId]: {
+            ...execution,
+            scheduledDayId: waitingEntry.returnScheduledDayId,
+          },
         },
+        doNowQueue: state.doNowQueue.filter((entry) => entry.stopId !== stopId),
+        lastUpdatedAt: now,
       },
-      doNowQueue: state.doNowQueue.filter((entry) => entry.stopId !== stopId),
-      lastUpdatedAt: now,
-    },
+      {
+        version: 1,
+        type: 'stop_do_now_cancelled',
+        stopId,
+        executionDayId: state.executionDayId!,
+        restoredScheduledDayId: waitingEntry.returnScheduledDayId,
+        recordedAt: now,
+      },
+    ),
   };
 }
 
@@ -560,7 +632,7 @@ export function markAlreadyVisited(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
-  const invalidTimestamp = runtimeTimestampFailure(now);
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
   if (invalidTimestamp) return invalidTimestamp;
   const terminal = terminalFailure(trip, state);
   if (terminal) return terminal;
@@ -582,19 +654,28 @@ export function markAlreadyVisited(
 
   return {
     ok: true,
-    state: {
-      ...state,
-      stopExecutions: {
-        ...state.stopExecutions,
-        [stopId]: {
-          ...execution,
-          status: 'completed',
-          completedRecordedAt: now,
-          completedOnDayId: state.executionDayId,
+    state: appendEvents(
+      {
+        ...state,
+        stopExecutions: {
+          ...state.stopExecutions,
+          [stopId]: {
+            ...execution,
+            status: 'completed',
+            completedRecordedAt: now,
+            completedOnDayId: state.executionDayId,
+          },
         },
+        lastUpdatedAt: now,
       },
-      lastUpdatedAt: now,
-    },
+      {
+        version: 1,
+        type: 'stop_already_visited',
+        stopId,
+        executionDayId: state.executionDayId,
+        recordedAt: now,
+      },
+    ),
   };
 }
 
@@ -662,6 +743,8 @@ export function endDay(
   state: TripExecutionState,
   now: string,
 ): TransitionResult {
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
+  if (invalidTimestamp) return invalidTimestamp;
   const context = validateEndDayContext(trip, state);
   if (typeof context !== 'string') return context;
   const restored = withCancelledDoNowOverrides(state);
@@ -671,7 +754,18 @@ export function endDay(
       'Choose how to resolve remaining scheduled work before ending the day.',
     );
   }
-  return { ok: true, state: withCompletedDay(restored, now) };
+  return {
+    ok: true,
+    state: withCompletedDay(
+      appendEvents(restored, {
+        version: 1,
+        type: 'day_ended',
+        executionDayId: context,
+        recordedAt: now,
+      }),
+      now,
+    ),
+  };
 }
 
 /** Resolves all normal current-day pending work without Skip or completion. */
@@ -680,31 +774,51 @@ export function saveAllForLaterAndEndDay(
   state: TripExecutionState,
   now: string,
 ): TransitionResult {
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
+  if (invalidTimestamp) return invalidTimestamp;
   const context = validateEndDayContext(trip, state);
   if (typeof context !== 'string') return context;
   const restored = withCancelledDoNowOverrides(state);
   const stopExecutions = { ...restored.stopExecutions };
-  for (const execution of Object.values(stopExecutions)) {
+  const savedEvents: ExecutionEvent[] = [];
+  for (const stop of trip.stops) {
+    const execution = stopExecutions[stop.id];
     if (
-      execution.status === 'pending' &&
+      execution?.status === 'pending' &&
       execution.scheduledDayId === context
     ) {
       stopExecutions[execution.stopId] = {
         ...execution,
         scheduledDayId: null,
       };
+      savedEvents.push({
+        version: 1,
+        type: 'stop_saved_for_later',
+        stopId: execution.stopId,
+        executionDayId: context,
+        recordedAt: now,
+      });
     }
   }
   return {
     ok: true,
     state: withCompletedDay(
-      {
-        ...restored,
-        stopExecutions,
-        currentStopId: undefined,
-        currentStepStartedAt: undefined,
-        currentInboundTravel: undefined,
-      },
+      appendEvents(
+        {
+          ...restored,
+          stopExecutions,
+          currentStopId: undefined,
+          currentStepStartedAt: undefined,
+          currentInboundTravel: undefined,
+        },
+        ...savedEvents,
+        {
+          version: 1,
+          type: 'day_ended',
+          executionDayId: context,
+          recordedAt: now,
+        },
+      ),
       now,
     ),
   };
@@ -729,7 +843,12 @@ export function switchExecutionDay(
 ): SwitchExecutionDayResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return switchRejected(mismatch);
-  if (!isCanonicalIsoTimestamp(now)) {
+  if (
+    !isCanonicalIsoTimestamp(now) ||
+    (state.eventLog.at(-1) !== undefined &&
+      new Date(now).valueOf() <
+        new Date(state.eventLog.at(-1)!.recordedAt).valueOf())
+  ) {
     return switchRejected(
       fail(
         'INVALID_SWITCH_TIMESTAMP',
@@ -811,13 +930,15 @@ export function switchExecutionDay(
 
   // Restore temporary planning overrides before classifying normal leftovers.
   const restored = withCancelledDoNowOverrides(state);
-  const remainingStopIds = Object.values(restored.stopExecutions)
-    .filter(
-      (execution) =>
+  const remainingStopIds = trip.stops
+    .filter((stop) => {
+      const execution = restored.stopExecutions[stop.id];
+      return (
         execution.status === 'pending' &&
-        execution.scheduledDayId === state.executionDayId,
-    )
-    .map((execution) => execution.stopId);
+        execution.scheduledDayId === state.executionDayId
+      );
+    })
+    .map((stop) => stop.id);
 
   if (remainingStopIds.length > 0 && resolution === undefined) {
     return {
@@ -837,7 +958,18 @@ export function switchExecutionDay(
         scheduledDayId: null,
       };
     }
-    resolved = { ...restored, stopExecutions };
+    resolved = appendEvents(
+      { ...restored, stopExecutions },
+      ...remainingStopIds.map(
+        (stopId): ExecutionEvent => ({
+          version: 1,
+          type: 'stop_saved_for_later',
+          stopId,
+          executionDayId: state.executionDayId!,
+          recordedAt: now,
+        }),
+      ),
+    );
   }
 
   const oldDayComplete = state.completedDayIds.includes(state.executionDayId)
@@ -848,21 +980,29 @@ export function switchExecutionDay(
     oldDayComplete,
     targetDayId,
   );
-  const switched: TripExecutionState = {
-    ...oldDayComplete,
-    executionDayId: targetDayId,
-    executionDayStartedAt: now,
-    currentStopId,
-    currentStepStartedAt: currentStopId ? now : undefined,
-    currentInboundTravel: currentStopId
-      ? {
-          fromStopId: null,
-          toStopId: currentStopId,
-          duration: inboundDuration,
-        }
-      : undefined,
-    lastUpdatedAt: now,
-  };
+  const switched: TripExecutionState = appendEvents(
+    {
+      ...oldDayComplete,
+      executionDayId: targetDayId,
+      executionDayStartedAt: now,
+      currentStopId,
+      currentStepStartedAt: currentStopId ? now : undefined,
+      currentInboundTravel: currentStopId
+        ? {
+            fromStopId: null,
+            toStopId: currentStopId,
+            duration: inboundDuration,
+          }
+        : undefined,
+      lastUpdatedAt: now,
+    },
+    {
+      version: 1,
+      type: 'day_started',
+      executionDayId: targetDayId,
+      recordedAt: now,
+    },
+  );
 
   if (!hasCoherentExecutionStateRelationships(trip, switched)) {
     return switchRejected(
@@ -884,6 +1024,8 @@ export function reopenCompletedDay(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
+  if (invalidTimestamp) return invalidTimestamp;
   if (!trip.days.some((day) => day.id === dayId)) {
     return fail('DAY_NOT_FOUND', `Day ${dayId} does not exist.`);
   }
@@ -901,13 +1043,21 @@ export function reopenCompletedDay(
 
   return {
     ok: true,
-    state: {
-      ...state,
-      completedDayIds: state.completedDayIds.filter(
-        (completedDayId) => completedDayId !== dayId,
-      ),
-      lastUpdatedAt: now,
-    },
+    state: appendEvents(
+      {
+        ...state,
+        completedDayIds: state.completedDayIds.filter(
+          (completedDayId) => completedDayId !== dayId,
+        ),
+        lastUpdatedAt: now,
+      },
+      {
+        version: 1,
+        type: 'day_reopened',
+        executionDayId: dayId,
+        recordedAt: now,
+      },
+    ),
   };
 }
 
@@ -916,6 +1066,8 @@ export function completeCurrentStop(
   state: TripExecutionState,
   now: string,
 ): TransitionResult {
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
+  if (invalidTimestamp) return invalidTimestamp;
   const context = currentContext(trip, state);
   if (isFailure(context)) return context;
 
@@ -923,18 +1075,27 @@ export function completeCurrentStop(
     return fail('CURRENT_NOT_PENDING', 'Current stop is not pending.');
   }
 
-  const nextState: TripExecutionState = {
-    ...state,
-    stopExecutions: {
-      ...state.stopExecutions,
-      [context.stopId]: {
-        ...context.execution,
-        status: 'completed',
-        completedRecordedAt: now,
-        completedOnDayId: context.day.id,
+  const nextState: TripExecutionState = appendEvents(
+    {
+      ...state,
+      stopExecutions: {
+        ...state.stopExecutions,
+        [context.stopId]: {
+          ...context.execution,
+          status: 'completed',
+          completedRecordedAt: now,
+          completedOnDayId: context.day.id,
+        },
       },
     },
-  };
+    {
+      version: 1,
+      type: 'stop_completed',
+      stopId: context.stopId,
+      executionDayId: context.day.id,
+      recordedAt: now,
+    },
+  );
 
   return {
     ok: true,
@@ -947,6 +1108,8 @@ export function skipCurrentStop(
   state: TripExecutionState,
   now: string,
 ): TransitionResult {
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
+  if (invalidTimestamp) return invalidTimestamp;
   const context = currentContext(trip, state);
   if (isFailure(context)) return context;
 
@@ -980,17 +1143,26 @@ function withSkippedExecution(
     completedOnDayId: _completedOnDayId,
     ...executionWithoutCompletion
   } = state.stopExecutions[stopId];
-  return {
-    ...state,
-    stopExecutions: {
-      ...state.stopExecutions,
-      [stopId]: {
-        ...executionWithoutCompletion,
-        status: 'skipped',
+  return appendEvents(
+    {
+      ...state,
+      stopExecutions: {
+        ...state.stopExecutions,
+        [stopId]: {
+          ...executionWithoutCompletion,
+          status: 'skipped',
+        },
       },
+      lastUpdatedAt: now,
     },
-    lastUpdatedAt: now,
-  };
+    {
+      version: 1,
+      type: 'stop_skipped',
+      stopId,
+      executionDayId: state.executionDayId!,
+      recordedAt: now,
+    },
+  );
 }
 
 /** Canonical Skip mutation for an eligible non-Current recommendation target. */
@@ -1047,6 +1219,8 @@ export function acceptSkipRecommendation(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
+  if (invalidTimestamp) return invalidTimestamp;
   const terminal = terminalFailure(trip, state);
   if (terminal) return terminal;
   if (!state.executionDayId) {
@@ -1073,7 +1247,83 @@ export function acceptSkipRecommendation(
     );
   }
 
-  return skipFutureTarget(trip, state, recommendation.targetStopId, now);
+  return skipFutureTarget(
+    trip,
+    appendEvents(state, {
+      version: 1,
+      type: 'decision_accepted',
+      ruleId,
+      severity: recommendation.severity,
+      targetStopId: recommendation.targetStopId,
+      executionDayId: state.executionDayId,
+      recordedAt: now,
+    }),
+    recommendation.targetStopId,
+    now,
+  );
+}
+
+/** Records first actual presentation without making derivation stateful. */
+export function recordDecisionShown(
+  trip: Trip,
+  state: TripExecutionState,
+  ruleId: string,
+  now: string,
+): TransitionResult {
+  const mismatch = tripMatchesState(trip, state);
+  if (mismatch) return mismatch;
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
+  if (invalidTimestamp) return invalidTimestamp;
+  const terminal = terminalFailure(trip, state);
+  if (terminal) return terminal;
+  if (!state.executionDayId) {
+    return fail('EXECUTION_DAY_NOT_ACTIVE', 'No execution day is active.');
+  }
+  const rule = (trip.rules ?? []).find((candidate) => candidate.id === ruleId);
+  if (!rule) return fail('RULE_NOT_FOUND', `Rule ${ruleId} does not exist.`);
+  if (rule.dayId !== state.executionDayId) {
+    return fail(
+      'RULE_NOT_ACTIVE_DAY',
+      `Rule ${ruleId} does not belong to the active execution day.`,
+    );
+  }
+
+  const recommendation = activeExecutionRecommendation(
+    trip,
+    state,
+    projectSchedule(trip, state, now),
+  );
+  if (recommendation?.ruleId !== ruleId) {
+    return fail(
+      'RECOMMENDATION_NOT_ACTIVE',
+      `Rule ${ruleId} is not an active recommendation.`,
+    );
+  }
+
+  const alreadyShown = state.eventLog.some(
+    (event) =>
+      event.type === 'decision_shown' &&
+      event.ruleId === ruleId &&
+      event.executionDayId === state.executionDayId &&
+      event.severity === recommendation.severity,
+  );
+  if (alreadyShown) return { ok: true, state };
+
+  return {
+    ok: true,
+    state: appendEvents(
+      { ...state, lastUpdatedAt: now },
+      {
+        version: 1,
+        type: 'decision_shown',
+        ruleId,
+        severity: recommendation.severity,
+        targetStopId: recommendation.targetStopId,
+        executionDayId: state.executionDayId,
+        recordedAt: now,
+      },
+    ),
+  };
 }
 
 /** Persists Keep It only for the currently active, re-derived prepared rule. */
@@ -1085,6 +1335,8 @@ export function acknowledgeRuleRecommendation(
 ): TransitionResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return mismatch;
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
+  if (invalidTimestamp) return invalidTimestamp;
   const terminal = terminalFailure(trip, state);
   if (terminal) return terminal;
   if (!state.executionDayId) {
@@ -1119,21 +1371,32 @@ export function acknowledgeRuleRecommendation(
   );
   return {
     ok: true,
-    state: {
-      ...state,
-      ruleAcknowledgements: alreadyAcknowledged
-        ? state.ruleAcknowledgements
-        : [
-            ...state.ruleAcknowledgements,
-            {
-              ruleId,
-              executionDayId: state.executionDayId,
-              severity: recommendation.severity,
-              acknowledgedAt: now,
-            },
-          ],
-      lastUpdatedAt: now,
-    },
+    state: appendEvents(
+      {
+        ...state,
+        ruleAcknowledgements: alreadyAcknowledged
+          ? state.ruleAcknowledgements
+          : [
+              ...state.ruleAcknowledgements,
+              {
+                ruleId,
+                executionDayId: state.executionDayId,
+                severity: recommendation.severity,
+                acknowledgedAt: now,
+              },
+            ],
+        lastUpdatedAt: now,
+      },
+      {
+        version: 1,
+        type: 'decision_rejected',
+        ruleId,
+        severity: recommendation.severity,
+        targetStopId: recommendation.targetStopId,
+        executionDayId: state.executionDayId,
+        recordedAt: now,
+      },
+    ),
   };
 }
 
@@ -1142,6 +1405,8 @@ export function saveCurrentForLater(
   state: TripExecutionState,
   now: string,
 ): TransitionResult {
+  const invalidTimestamp = runtimeTimestampFailure(state, now);
+  if (invalidTimestamp) return invalidTimestamp;
   const context = currentContext(trip, state);
   if (isFailure(context)) return context;
 
@@ -1154,16 +1419,25 @@ export function saveCurrentForLater(
     completedOnDayId: _completedOnDayId,
     ...executionWithoutCompletion
   } = context.execution;
-  const nextState: TripExecutionState = {
-    ...state,
-    stopExecutions: {
-      ...state.stopExecutions,
-      [context.stopId]: {
-        ...executionWithoutCompletion,
-        scheduledDayId: null,
+  const nextState: TripExecutionState = appendEvents(
+    {
+      ...state,
+      stopExecutions: {
+        ...state.stopExecutions,
+        [context.stopId]: {
+          ...executionWithoutCompletion,
+          scheduledDayId: null,
+        },
       },
     },
-  };
+    {
+      version: 1,
+      type: 'stop_saved_for_later',
+      stopId: context.stopId,
+      executionDayId: context.day.id,
+      recordedAt: now,
+    },
+  );
 
   return {
     ok: true,

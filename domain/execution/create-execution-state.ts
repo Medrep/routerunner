@@ -25,6 +25,7 @@ export function createInitialTripExecutionState(
     doNowQueue: [],
     completedDayIds: [],
     ruleAcknowledgements: [],
+    eventLog: [],
     lastUpdatedAt: now,
   };
 }

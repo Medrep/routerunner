@@ -440,7 +440,7 @@ void test('complete states have inactive projection and no stale execution timin
   assert.equal(complete.currentInboundTravel, undefined);
 });
 
-void test('schema v2 reload preserves natural, reopened, recompleted, and zero-work states', () => {
+void test('schema v3 reload preserves natural, reopened, recompleted, and zero-work states', () => {
   const trip = fixtureTrip([ids.a]);
   const natural = accepted(
     saveCurrentForLater(trip, activeState(trip), changedAt),
@@ -481,7 +481,7 @@ void test('schema v2 reload preserves natural, reopened, recompleted, and zero-w
   );
 });
 
-void test('schema v2 reload preserves save-all and restored queue contexts', () => {
+void test('schema v3 reload preserves save-all and restored queue contexts', () => {
   const trip = fixtureTrip();
   let active = activeState(trip);
   active = accepted(doNowStop(trip, active, ids.x, changedAt));

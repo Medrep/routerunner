@@ -100,6 +100,7 @@ void test('original planned day remains derivable when execution diverges', () =
     doNowQueue: [],
     completedDayIds: [],
     ruleAcknowledgements: [],
+    eventLog: [],
     lastUpdatedAt: '2026-09-06T16:00:00+02:00',
   };
 

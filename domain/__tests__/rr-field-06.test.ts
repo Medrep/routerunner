@@ -326,7 +326,7 @@ void test('execution persistence contains no internal visit-plan data', () => {
   );
 
   assert.equal(result.status, 'saved');
-  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 2);
+  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 3);
   assert.equal(serialized.includes('visitPlan'), false);
   assert.equal(serialized.includes('gallery-of-maps'), false);
 });

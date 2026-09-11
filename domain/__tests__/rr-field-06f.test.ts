@@ -322,7 +322,7 @@ void test('execution persistence excludes MIT internal items and stays isolated 
   for (const internalId of Object.values(krakowMitVisitPlanItemIds)) {
     assert.equal(serializedKrakow.includes(internalId), false);
   }
-  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 2);
+  assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 3);
 });
 
 void test('private-test trip selection defaults to Copenhagen and distinguishes Kraków', () => {

@@ -86,6 +86,7 @@ import {
   pendingForLaterActionModels,
   postDayGoogleMapsNavigationUrl,
   projectSchedule,
+  recordDecisionShown,
   restoreOrCreateExecutionState,
   saveAllForLaterAndEndDay,
   saveCurrentForLater as saveCurrentForLaterTransition,
@@ -414,6 +415,39 @@ function ExecutionPage() {
     isReadOnlyPreview || scheduleProjection.status === 'inactive'
       ? []
       : scheduleProjection.constraintAlerts;
+
+  useEffect(() => {
+    if (!recommendation || isReadOnlyPreview) return;
+    if (
+      execution.eventLog.some(
+        (event) =>
+          event.type === 'decision_shown' &&
+          event.ruleId === recommendation.ruleId &&
+          event.executionDayId === recommendation.executionDayId &&
+          event.severity === recommendation.severity,
+      )
+    ) {
+      return;
+    }
+
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      const now = new Date().toISOString();
+      const persisted = persistExecutionTransition(
+        trip,
+        execution,
+        recordDecisionShown(trip, execution, recommendation.ruleId, now),
+      );
+      if (persisted.status === 'accepted') {
+        setExecution(persisted.state);
+        setProjectionNow(now);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [execution, isReadOnlyPreview, recommendation, trip]);
 
   function planNumber(stopId: StopId): number | undefined {
     const index = orderedPlan.findIndex((item) => item.stopId === stopId);

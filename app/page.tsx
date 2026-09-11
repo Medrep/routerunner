@@ -41,6 +41,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import RouteMap from '@/components/routerunner/route-map';
+import WholeTripMap from '@/components/routerunner/whole-trip-map';
 import {
   defaultViewedDayId,
   deriveTripOverviewPresentation,
@@ -76,6 +77,7 @@ import {
   deriveDayPreviewRouteMapView,
   deriveRouteMapView,
   deriveStopActionModel,
+  deriveWholeTripMapView,
   doNowStop,
   endDay,
   isWaitingDoNow,
@@ -281,6 +283,7 @@ function ExecutionPage() {
     new Date().toISOString(),
   );
   const [full, setFull] = useState(false);
+  const [wholeTripMapOpen, setWholeTripMapOpen] = useState(false);
   const [detail, setDetail] = useState<StopId | null>(null);
   const [feedback, setFeedback] = useState('');
   const [endDayResolutionOpen, setEndDayResolutionOpen] = useState(false);
@@ -480,6 +483,10 @@ function ExecutionPage() {
       ? deriveDayPreviewRouteMapView(trip, execution, day.id, coordinates)
       : deriveRouteMapView(trip, execution, coordinates);
   }, [day.id, execution, isReadOnlyPreview, location, trip]);
+  const wholeTripMapView = useMemo(
+    () => deriveWholeTripMapView(trip, execution),
+    [execution, trip],
+  );
   const navigationUrl = currentGoogleMapsNavigationUrl(trip, execution);
 
   function apply(
@@ -775,6 +782,12 @@ function ExecutionPage() {
     setTripSurface('overview');
   }
 
+  function openWholeTripMap() {
+    setDetail(null);
+    setFull(false);
+    setWholeTripMapOpen(true);
+  }
+
   function viewPlannedDay(dayId: string) {
     setViewedDayId(dayId);
     setDetail(null);
@@ -834,16 +847,19 @@ function ExecutionPage() {
           </div>
           <strong>RouteRunner</strong>
           <span>YOUR DAY. ONE CLEAR NEXT STEP.</span>
-          {trip.days.length > 1 && (
-            <button
-              type="button"
-              className="overview-trigger"
-              onClick={openTripOverview}
-              aria-current={tripSurface === 'overview' ? 'page' : undefined}
-            >
-              <CalendarDays size={16} /> Trip overview
-            </button>
-          )}
+          <button
+            type="button"
+            className="overview-trigger"
+            onClick={openTripOverview}
+            aria-current={tripSurface === 'overview' ? 'page' : undefined}
+            aria-label={
+              trip.days.length > 1
+                ? 'View trip overview'
+                : 'View planned day overview'
+            }
+          >
+            <CalendarDays size={16} /> Trip overview
+          </button>
           <div className="day-chip">
             <MapPin size={14} />
             {trip.city}
@@ -892,9 +908,18 @@ function ExecutionPage() {
                 <p className="eyebrow">PLANNED DAYS</p>
                 <h2>{trip.city ?? trip.title}</h2>
               </div>
-              <span>
-                {trip.startDate} — {trip.endDate}
-              </span>
+              <div className="trip-overview-heading-actions">
+                <span>
+                  {trip.startDate} — {trip.endDate}
+                </span>
+                <button
+                  type="button"
+                  className="secondary trip-map-trigger"
+                  onClick={openWholeTripMap}
+                >
+                  <MapPin size={17} /> View trip map
+                </button>
+              </div>
             </div>
             <div className="trip-overview-days">
               {overview.days.map((overviewDay) => {
@@ -1682,6 +1707,24 @@ function ExecutionPage() {
           <DialogClose className="full-map-back">
             <ArrowLeft size={20} />
             Back to day
+          </DialogClose>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={wholeTripMapOpen} onOpenChange={setWholeTripMapOpen}>
+        <DialogContent className="fullscreen-map" showCloseButton={false}>
+          <DialogTitle className="sr-only">
+            {trip.title} whole trip map
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Read-only map of every planned day. Opening and closing this map
+            leaves execution and the viewed day unchanged.
+          </DialogDescription>
+          <div className="full-map-body">
+            <WholeTripMap view={wholeTripMapView} />
+          </div>
+          <DialogClose className="full-map-back">
+            <ArrowLeft size={20} />
+            Back to overview
           </DialogClose>
         </DialogContent>
       </Dialog>

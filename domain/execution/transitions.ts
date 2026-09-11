@@ -4,6 +4,7 @@ import {
   projectSchedule,
 } from '../schedule/project-schedule.ts';
 import { isTripComplete } from './lifecycle.ts';
+import { isCanonicalIsoTimestamp, isKnownOrUnknownDuration } from './types.ts';
 import type {
   KnownOrUnknownDuration,
   StopExecution,
@@ -21,6 +22,9 @@ export type TransitionErrorCode =
   | 'DAY_NOT_EXECUTION_CONTEXT'
   | 'NEXT_EXECUTION_DAY_REQUIRED'
   | 'EXECUTION_STATE_INCOHERENT'
+  | 'INVALID_SWITCH_TIMESTAMP'
+  | 'INVALID_INBOUND_DURATION'
+  | 'INVALID_SWITCH_RESOLUTION'
   | 'TRIP_COMPLETE'
   | 'CURRENT_NOT_FOUND'
   | 'CURRENT_STOP_NOT_FOUND'
@@ -175,7 +179,7 @@ export function hasCoherentExecutionStateRelationships(
 
   if (
     !trip.days.some((day) => day.id === state.executionDayId) ||
-    state.executionDayStartedAt === undefined
+    !isCanonicalIsoTimestamp(state.executionDayStartedAt)
   ) {
     return false;
   }
@@ -231,7 +235,9 @@ export function hasCoherentExecutionStateRelationships(
   return (
     currentExecution?.status === 'pending' &&
     currentExecution.scheduledDayId === state.executionDayId &&
-    state.currentStepStartedAt !== undefined &&
+    isCanonicalIsoTimestamp(state.currentStepStartedAt) &&
+    new Date(state.currentStepStartedAt).valueOf() >=
+      new Date(state.executionDayStartedAt).valueOf() &&
     state.currentInboundTravel !== undefined &&
     state.currentInboundTravel.toStopId === state.currentStopId &&
     (currentIsQueued ||
@@ -653,6 +659,30 @@ export function switchExecutionDay(
 ): SwitchExecutionDayResult {
   const mismatch = tripMatchesState(trip, state);
   if (mismatch) return switchRejected(mismatch);
+  if (!isCanonicalIsoTimestamp(now)) {
+    return switchRejected(
+      fail(
+        'INVALID_SWITCH_TIMESTAMP',
+        'The execution-day switch timestamp is invalid.',
+      ),
+    );
+  }
+  if (!isKnownOrUnknownDuration(inboundDuration)) {
+    return switchRejected(
+      fail(
+        'INVALID_INBOUND_DURATION',
+        'The new execution-day inbound duration is invalid.',
+      ),
+    );
+  }
+  if (resolution !== undefined && resolution !== 'save_all_for_later') {
+    return switchRejected(
+      fail(
+        'INVALID_SWITCH_RESOLUTION',
+        'The execution-day switch resolution is unsupported.',
+      ),
+    );
+  }
   const terminal = terminalFailure(trip, state);
   if (terminal) return switchRejected(terminal);
 

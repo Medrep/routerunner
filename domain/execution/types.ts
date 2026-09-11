@@ -26,6 +26,40 @@ export type KnownOrUnknownDuration =
       reason?: 'unresolved' | 'unavailable';
     };
 
+/** Existing persistence timestamp convention: canonical UTC ISO instant. */
+export function isCanonicalIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString() === value;
+}
+
+/** Runtime guard for the persisted KnownOrUnknownDuration union. */
+export function isKnownOrUnknownDuration(
+  value: unknown,
+): value is KnownOrUnknownDuration {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const duration = value as Record<string, unknown>;
+  if (duration.status === 'known') {
+    return (
+      typeof duration.minutes === 'number' &&
+      Number.isFinite(duration.minutes) &&
+      duration.minutes >= 0 &&
+      duration.reason === undefined
+    );
+  }
+  return (
+    duration.status === 'unknown' &&
+    duration.minutes === undefined &&
+    (duration.reason === undefined ||
+      duration.reason === 'unresolved' ||
+      duration.reason === 'unavailable')
+  );
+}
+
 export interface CurrentInboundTravel {
   fromStopId: StopId | null;
   toStopId: StopId;

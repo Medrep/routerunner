@@ -8,6 +8,7 @@ import type {
   StopExecutionStatus,
   TripExecutionState,
 } from './types.ts';
+import { isCanonicalIsoTimestamp, isKnownOrUnknownDuration } from './types.ts';
 import { createInitialTripExecutionState } from './create-execution-state.ts';
 import { hasCoherentExecutionStateRelationships } from './transitions.ts';
 import type { TransitionError, TransitionResult } from './transitions.ts';
@@ -70,13 +71,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isIsoTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-
-  const parsed = new Date(value);
-  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString() === value;
-}
-
 function optionalValue(record: Record<string, unknown>, key: string): unknown {
   return Object.hasOwn(record, key) ? record[key] : undefined;
 }
@@ -91,31 +85,14 @@ function canonicalDayId(
 function durationFromUnknown(
   value: unknown,
 ): KnownOrUnknownDuration | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isKnownOrUnknownDuration(value)) return undefined;
 
-  if (
-    value.status === 'known' &&
-    typeof value.minutes === 'number' &&
-    Number.isFinite(value.minutes) &&
-    value.minutes >= 0
-  ) {
+  if (value.status === 'known') {
     return { status: 'known', minutes: value.minutes };
   }
-
-  if (value.status !== 'unknown') return undefined;
-
-  const reason = optionalValue(value, 'reason');
-  if (
-    reason !== undefined &&
-    reason !== 'unresolved' &&
-    reason !== 'unavailable'
-  ) {
-    return undefined;
-  }
-
-  return reason === undefined
+  return value.reason === undefined
     ? { status: 'unknown' }
-    : { status: 'unknown', reason };
+    : { status: 'unknown', reason: value.reason };
 }
 
 function inboundTravelFromUnknown(
@@ -163,7 +140,7 @@ function stopExecutionFromUnknown(
   const completedRecordedAt = optionalValue(value, 'completedRecordedAt');
   if (
     completedRecordedAt !== undefined &&
-    !isIsoTimestamp(completedRecordedAt)
+    !isCanonicalIsoTimestamp(completedRecordedAt)
   ) {
     return undefined;
   }
@@ -242,9 +219,9 @@ function stateFromUnknown(
   const currentStepStartedAt = optionalValue(value, 'currentStepStartedAt');
   if (
     (executionDayStartedAt !== undefined &&
-      !isIsoTimestamp(executionDayStartedAt)) ||
+      !isCanonicalIsoTimestamp(executionDayStartedAt)) ||
     (currentStepStartedAt !== undefined &&
-      !isIsoTimestamp(currentStepStartedAt))
+      !isCanonicalIsoTimestamp(currentStepStartedAt))
   ) {
     return undefined;
   }
@@ -307,7 +284,7 @@ function stateFromUnknown(
         rawAcknowledgement.executionDayId ||
       (rawAcknowledgement.severity !== 'SCHEDULE_TIGHT' &&
         rawAcknowledgement.severity !== 'DEADLINE_AT_RISK') ||
-      !isIsoTimestamp(rawAcknowledgement.acknowledgedAt)
+      !isCanonicalIsoTimestamp(rawAcknowledgement.acknowledgedAt)
     ) {
       return undefined;
     }
@@ -322,7 +299,7 @@ function stateFromUnknown(
     });
   }
 
-  if (!isIsoTimestamp(value.lastUpdatedAt)) return undefined;
+  if (!isCanonicalIsoTimestamp(value.lastUpdatedAt)) return undefined;
 
   const state: TripExecutionState = {
     tripId: trip.id,
@@ -400,7 +377,7 @@ export function deserializeExecutionState(
       reason: 'Persisted execution trip does not match.',
     };
   }
-  if (!isIsoTimestamp(parsed.savedAt)) {
+  if (!isCanonicalIsoTimestamp(parsed.savedAt)) {
     return {
       status: 'invalid',
       reason: 'Persisted execution savedAt is invalid.',
@@ -468,7 +445,7 @@ export function saveExecutionState(
 ): SaveExecutionStateResult {
   if (
     state.tripId !== trip.id ||
-    !isIsoTimestamp(savedAt) ||
+    !isCanonicalIsoTimestamp(savedAt) ||
     stateFromUnknown(state, trip) === undefined
   ) {
     return {

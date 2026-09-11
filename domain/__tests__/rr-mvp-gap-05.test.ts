@@ -606,6 +606,119 @@ void test('DAY_COMPLETE reload retains Day 1 and does not switch automatically',
   assert.equal(tripExecutionLifecycle(trip, loaded).status, 'DAY_COMPLETE');
 });
 
+void test('switch rejects noncanonical runtime inputs without mutation', () => {
+  const trip = fixtureTrip();
+  const complete = completeDayOne(trip);
+  const completeBefore = structuredClone(complete);
+  const invalidResolution = 'force' as unknown as 'save_all_for_later';
+  const cases = [
+    {
+      result: switchExecutionDay(
+        trip,
+        complete,
+        dayTwoId,
+        'not-a-date',
+        knownInbound,
+      ),
+      code: 'INVALID_SWITCH_TIMESTAMP',
+    },
+    {
+      result: switchExecutionDay(trip, complete, dayTwoId, '', knownInbound),
+      code: 'INVALID_SWITCH_TIMESTAMP',
+    },
+    {
+      result: switchExecutionDay(trip, complete, dayTwoId, switchedAt, {
+        status: 'known',
+        minutes: -1,
+      }),
+      code: 'INVALID_INBOUND_DURATION',
+    },
+    {
+      result: switchExecutionDay(trip, complete, dayTwoId, switchedAt, {
+        status: 'known',
+        minutes: Number.NaN,
+      }),
+      code: 'INVALID_INBOUND_DURATION',
+    },
+    {
+      result: switchExecutionDay(trip, complete, dayTwoId, switchedAt, {
+        status: 'known',
+        minutes: Number.POSITIVE_INFINITY,
+      }),
+      code: 'INVALID_INBOUND_DURATION',
+    },
+    {
+      result: switchExecutionDay(trip, complete, dayTwoId, switchedAt, {
+        status: 'known',
+        minutes: Number.NEGATIVE_INFINITY,
+      }),
+      code: 'INVALID_INBOUND_DURATION',
+    },
+    {
+      result: switchExecutionDay(trip, complete, dayTwoId, switchedAt, {
+        status: 'unknown',
+        reason: 'invented',
+      } as unknown as typeof unknownInbound),
+      code: 'INVALID_INBOUND_DURATION',
+    },
+    {
+      result: switchExecutionDay(
+        trip,
+        complete,
+        dayTwoId,
+        switchedAt,
+        knownInbound,
+        invalidResolution,
+      ),
+      code: 'INVALID_SWITCH_RESOLUTION',
+    },
+  ] as const;
+
+  for (const { result, code } of cases) {
+    assert.equal(result.status, 'rejected');
+    assert.equal(result.error.code, code);
+    assert.notEqual(result.status, 'switched');
+    assert.deepEqual(complete, completeBefore);
+  }
+
+  const active = mixedActiveDayOne(trip);
+  const activeBefore = structuredClone(active);
+  const invalidLeftoverResolution = switchExecutionDay(
+    trip,
+    active,
+    dayTwoId,
+    switchedAt,
+    knownInbound,
+    invalidResolution,
+  );
+  assert.equal(invalidLeftoverResolution.status, 'rejected');
+  assert.equal(
+    invalidLeftoverResolution.error.code,
+    'INVALID_SWITCH_RESOLUTION',
+  );
+  assert.deepEqual(active, activeBefore);
+});
+
+void test('switch accepts canonical unknown and zero inbound runtime values', () => {
+  const trip = fixtureTrip();
+  const complete = completeDayOne(trip);
+  const unknown = switched(
+    switchExecutionDay(trip, complete, dayTwoId, switchedAt, unknownInbound),
+  );
+  assert.deepEqual(unknown.currentInboundTravel?.duration, unknownInbound);
+
+  const zero = switched(
+    switchExecutionDay(trip, complete, dayTwoId, switchedAt, {
+      status: 'known',
+      minutes: 0,
+    }),
+  );
+  assert.deepEqual(zero.currentInboundTravel?.duration, {
+    status: 'known',
+    minutes: 0,
+  });
+});
+
 void test('schema stays v2 and production wiring keeps preview and execution actions distinct', () => {
   assert.equal(EXECUTION_STATE_SCHEMA_VERSION, 2);
   const source = readFileSync(

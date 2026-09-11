@@ -12,10 +12,12 @@ import {
   completeCurrentStop,
   createInitialTripExecutionState,
   deserializeExecutionState,
+  doNowStop,
   EXECUTION_STATE_SCHEMA_VERSION,
   executionStorageKey,
   loadExecutionState,
   persistExecutionTransition,
+  projectSchedule,
   restoreOrCreateExecutionState,
   saveCurrentForLater,
   saveExecutionState,
@@ -425,6 +427,7 @@ void test('round-trips Start Day with Nyhavn Current and unknown duration', () =
   assert.equal(loaded.state.currentStopId, copenhagenStopIds.nyhavn);
   assert.equal(loaded.state.executionDayId, dayId);
   assert.equal(loaded.state.executionDayStartedAt, startedAt);
+  assert.equal(loaded.state.currentStepStartedAt, startedAt);
   assert.deepEqual(loaded.state.currentInboundTravel?.duration, {
     status: 'unknown',
     reason: 'unresolved',
@@ -436,6 +439,70 @@ void test('round-trips Start Day with Nyhavn Current and unknown duration', () =
       (execution) => execution.status === 'pending',
     ),
   );
+});
+
+void test('rejects a persisted Current timestamp older than its execution day before projection authority', () => {
+  const currentStepStartedAt = '2026-09-11T08:00:00.000Z';
+  const executionDayStartedAt = '2026-09-12T08:00:00.000Z';
+  const trip: Trip = {
+    ...persistenceTrip,
+    stops: persistenceTrip.stops.map((stop) =>
+      stop.id === copenhagenStopIds.amalienborg
+        ? { ...stop, plannedVisitMinutes: 60 }
+        : stop,
+    ),
+  };
+  const state = successfulState(
+    startDay(
+      trip,
+      createInitialTripExecutionState(trip, initializedAt),
+      persistenceDayTwoId,
+      currentStepStartedAt,
+    ),
+  );
+  state.executionDayStartedAt = executionDayStartedAt;
+  state.currentInboundTravel = {
+    fromStopId: null,
+    toStopId: copenhagenStopIds.amalienborg,
+    duration: { status: 'known', minutes: 8 },
+  };
+  state.lastUpdatedAt = executionDayStartedAt;
+
+  const rawProjection = projectSchedule(trip, state, executionDayStartedAt);
+  assert.equal(rawProjection.status, 'calculable');
+  assert.equal(rawProjection.remainingMinutes, 0);
+  assertRejectedOnSaveAndHydrate(trip, state);
+});
+
+void test('accepts equal and later Current timestamps, including same-day Do Now reopen', () => {
+  const equal = startedPersistenceState(persistenceDayOneId);
+  assert.equal(equal.currentStepStartedAt, equal.executionDayStartedAt);
+  roundTrip(equal, persistenceTrip);
+
+  const later = successfulState(
+    completeCurrentStop(copenhagenTrip, activeState(), changedAt),
+  );
+  assert.ok(
+    new Date(later.currentStepStartedAt!).valueOf() >
+      new Date(later.executionDayStartedAt!).valueOf(),
+  );
+  roundTrip(later);
+
+  const dayComplete = successfulState(
+    saveCurrentForLater(persistenceTrip, equal, changedAt),
+  );
+  const reopenedAt = '2026-09-08T09:00:00.000Z';
+  const reopened = successfulState(
+    doNowStop(
+      persistenceTrip,
+      dayComplete,
+      copenhagenStopIds.nyhavn,
+      reopenedAt,
+    ),
+  );
+  assert.equal(reopened.executionDayStartedAt, startedAt);
+  assert.equal(reopened.currentStepStartedAt, reopenedAt);
+  roundTrip(reopened, persistenceTrip);
 });
 
 void test('round-trips Done with completion history and next Current', () => {

@@ -79,6 +79,7 @@ import {
   doNowStop,
   endDay,
   isWaitingDoNow,
+  isSightseeingStop,
   markAlreadyVisited,
   nextEligiblePendingStopId,
   orderedDayPlan,
@@ -94,6 +95,8 @@ import {
   startDayAndBuildNavigation,
   switchExecutionDay,
   shouldRefreshScheduleProjection,
+  stopActivityLabel,
+  stopSemanticLabel,
   tripExecutionLifecycle,
   waitingDoNowActionModels,
   type RouteMapStopStatus,
@@ -116,12 +119,6 @@ function Mode({ mode, size = 16 }: { mode: TravelMode; size?: number }) {
   ) : (
     <Footprints size={size} />
   );
-}
-
-function priorityLabel(stop: Stop) {
-  if (stop.priority === 'must') return 'Must-see';
-  if (stop.priority === 'optional') return 'Optional';
-  return 'Part of your route';
 }
 
 function formatProjectedTime(instant: string, timeZone: string) {
@@ -304,6 +301,10 @@ function ExecutionPage() {
   const day = viewedDay.day;
   const orderedPlan = orderedDayPlan(day);
   const dayPlanModel = dayPlanPresentationModel(day, trip.stops);
+  const sightseeingStopCount = dayPlanModel.filter(({ stop }) =>
+    isSightseeingStop(stop),
+  ).length;
+  const logisticsStopCount = dayPlanModel.length - sightseeingStopCount;
   const isReadOnlyPreview = overview.isReadOnlyPreview;
   const refreshProjectionClock = shouldRefreshScheduleProjection(execution);
   const executionDayIndex = trip.days.findIndex(
@@ -351,6 +352,9 @@ function ExecutionPage() {
   const location = useForegroundLocation(started);
   const current =
     trip.stops.find((stop) => stop.id === execution.currentStopId) ?? null;
+  const currentActionModel = current
+    ? deriveStopActionModel(trip, execution, current.id)
+    : undefined;
   const firstPreparedStopId = orderedPlan[0]?.stopId;
   const firstPreparedStop = trip.stops.find(
     (stop) => stop.id === firstPreparedStopId,
@@ -448,11 +452,6 @@ function ExecutionPage() {
       active = false;
     };
   }, [execution, isReadOnlyPreview, recommendation, trip]);
-
-  function planNumber(stopId: StopId): number | undefined {
-    const index = orderedPlan.findIndex((item) => item.stopId === stopId);
-    return index < 0 ? undefined : index + 1;
-  }
 
   function modelStopHistory(stopId: StopId) {
     return viewedDay.stops.find((stop) => stop.stopId === stopId);
@@ -857,7 +856,7 @@ function ExecutionPage() {
                 ? `TRIP OVERVIEW · ${trip.days.length} DAYS`
                 : trip.days.length === 1
                   ? `ONE DAY · ${dayPlanModel.length} STOPS`
-                  : `${viewedDay.label.toUpperCase()} OF ${trip.days.length} · ${isReadOnlyPreview ? 'PREVIEW · ' : ''}${dayPlanModel.length} STOPS`}
+                  : `${viewedDay.label.toUpperCase()} OF ${trip.days.length} · ${isReadOnlyPreview ? 'PREVIEW · ' : ''}${sightseeingStopCount} ${logisticsStopCount > 0 ? `SIGHTS · ${logisticsStopCount} LOGISTICS` : 'STOPS'}`}
             </p>
             <h1>
               {trip.title}
@@ -930,7 +929,9 @@ function ExecutionPage() {
                         </div>
                       </div>
                       <p className="trip-overview-summary">
-                        {overviewDay.plannedStopCount} planned stops
+                        {overviewDay.logisticsStopCount > 0
+                          ? `${overviewDay.sightseeingStopCount} sights · ${overviewDay.logisticsStopCount} logistics`
+                          : `${overviewDay.plannedStopCount} planned stops`}
                         {overviewDay.completedStopCount > 0 &&
                           ` · ${overviewDay.completedStopCount} visited`}
                         {overviewDay.skippedStopCount > 0 &&
@@ -953,9 +954,7 @@ function ExecutionPage() {
                         }
                         onClick={() => viewPlannedDay(overviewDay.dayId)}
                       >
-                        {overviewDay.dayId === overview.executionViewDayId
-                          ? 'Open day'
-                          : 'Preview'}
+                        Preview day
                         <ChevronRight size={18} />
                       </button>
                       {overviewDay.dayId === nextPlannedDay?.id && (
@@ -1110,7 +1109,7 @@ function ExecutionPage() {
                                 viewPlannedDay(nextPlannedOverviewDay.dayId)
                               }
                             >
-                              View tomorrow
+                              Preview day
                             </button>
                             <button
                               type="button"
@@ -1177,13 +1176,15 @@ function ExecutionPage() {
                       onClick={() => setDetail(displayedStop.id)}
                     >
                       <span className="big-number">
-                        {planNumber(displayedStop.id) ?? '—'}
+                        {displayedPlanItem?.markerLabel ?? '—'}
                       </span>
                       <div>
                         <h2>{displayedStop.name}</h2>
                         <p>
-                          {started ? 'Explore' : 'Your day begins here'} · ~
-                          {displayedStop.plannedVisitMinutes} min
+                          {started
+                            ? stopActivityLabel(displayedStop)
+                            : 'Your day begins here'}{' '}
+                          · ~{displayedStop.plannedVisitMinutes} min
                         </p>
                         {displayedPlanItem?.plannedStartTime && (
                           <p className="planned-start-time">
@@ -1224,11 +1225,12 @@ function ExecutionPage() {
                         <div>
                           <p className="eyebrow">
                             NEXT{' '}
-                            {nextStop.priority === 'optional' && (
-                              <span className="inline-optional">
-                                ◇ OPTIONAL
-                              </span>
-                            )}
+                            {isSightseeingStop(nextStop) &&
+                              nextStop.priority === 'optional' && (
+                                <span className="inline-optional">
+                                  ◇ OPTIONAL
+                                </span>
+                              )}
                           </p>
                           <h3>
                             {nextStop.name}
@@ -1256,20 +1258,21 @@ function ExecutionPage() {
                       </button>
                     )}
                     <div className="actions">
-                      {!started ? (
-                        <button
-                          className="secondary"
-                          onClick={beginDayAndNavigate}
-                        >
-                          <Navigation size={20} /> Start &amp; navigate
-                        </button>
-                      ) : (
-                        navigationUrl && (
-                          <a className="secondary" href={navigationUrl}>
-                            <Navigation size={20} /> Navigate
-                          </a>
-                        )
-                      )}
+                      {!started
+                        ? firstPreparedStop?.logisticsRole !== 'start' && (
+                            <button
+                              className="secondary"
+                              onClick={beginDayAndNavigate}
+                            >
+                              <Navigation size={20} /> Start &amp; navigate
+                            </button>
+                          )
+                        : currentActionModel?.actions.navigate &&
+                          navigationUrl && (
+                            <a className="secondary" href={navigationUrl}>
+                              <Navigation size={20} /> Navigate
+                            </a>
+                          )}
                       <button
                         className="primary"
                         onClick={started ? done : beginDay}
@@ -1279,13 +1282,17 @@ function ExecutionPage() {
                         ) : (
                           <ArrowRight size={21} />
                         )}{' '}
-                        {started ? 'Done' : 'Start day'}
+                        {started
+                          ? currentActionModel?.completionLabel
+                          : 'Start day'}
                       </button>
                     </div>
                     <p className="action-context">
                       {started
-                        ? `Done completes ${displayedStop.name}.`
-                        : 'Start Day stays in RouteRunner. Start & navigate also opens Google Maps.'}
+                        ? `${currentActionModel?.completionLabel ?? 'Done'} completes ${displayedStop.name}.`
+                        : firstPreparedStop?.logisticsRole === 'start'
+                          ? 'Start Day begins at this start point.'
+                          : 'Start Day stays in RouteRunner. Start & navigate also opens Google Maps.'}
                     </p>
                     {started && (
                       <button
@@ -1493,83 +1500,90 @@ function ExecutionPage() {
                 <div className="section-heading">
                   <h2>Your day</h2>
                   <span>
-                    {completed} of {dayPlanModel.length} visited
+                    {completed} of {dayPlanModel.length} execution items
+                    complete
                   </span>
                 </div>
                 <ol>
-                  {dayPlanModel.map(({ stop, plannedStartTime }, planIndex) => {
-                    const status = presentationStatus(stop.id);
-                    const previousStop = dayPlanModel[planIndex - 1]?.stop;
-                    const travel = preparedLeg(previousStop, stop);
-                    return (
-                      <li key={stop.id} className={`itinerary-item ${status}`}>
-                        {planIndex > 0 &&
-                          status !== 'skipped' &&
-                          status !== 'saved' &&
-                          travel && (
-                            <div className="transit-row">
-                              <Mode mode={travel.mode} size={14} />
+                  {dayPlanModel.map(
+                    ({ stop, plannedStartTime, markerLabel }, planIndex) => {
+                      const status = presentationStatus(stop.id);
+                      const previousStop = dayPlanModel[planIndex - 1]?.stop;
+                      const travel = preparedLeg(previousStop, stop);
+                      return (
+                        <li
+                          key={stop.id}
+                          className={`itinerary-item ${status}`}
+                        >
+                          {planIndex > 0 &&
+                            status !== 'skipped' &&
+                            status !== 'saved' &&
+                            travel && (
+                              <div className="transit-row">
+                                <Mode mode={travel.mode} size={14} />
+                                <span>
+                                  Prepared {travel.mode} leg
+                                  {travel.plannedDurationMinutes !==
+                                    undefined &&
+                                    ` · ${travel.plannedDurationMinutes} min`}
+                                </span>
+                              </div>
+                            )}
+                          <button
+                            className="itinerary-stop"
+                            onClick={() => setDetail(stop.id)}
+                            aria-label={`${stop.name}, ${status}, ${stopSemanticLabel(stop)}`}
+                          >
+                            <span
+                              className={`stop-number ${stop.priority === 'optional' ? 'optional-number' : ''}`}
+                            >
+                              {status === 'completed' ? (
+                                <Check size={17} />
+                              ) : status === 'skipped' ? (
+                                '−'
+                              ) : status === 'saved' ? (
+                                '◇'
+                              ) : (
+                                markerLabel
+                              )}
+                            </span>
+                            {plannedStartTime && (
+                              <time
+                                className="itinerary-planned-time"
+                                dateTime={plannedStartTime}
+                              >
+                                {plannedStartTime}
+                              </time>
+                            )}
+                            <div>
+                              <strong>{stop.name}</strong>
                               <span>
-                                Prepared {travel.mode} leg
-                                {travel.plannedDurationMinutes !== undefined &&
-                                  ` · ${travel.plannedDurationMinutes} min`}
+                                {status === 'skipped'
+                                  ? 'Skipped'
+                                  : status === 'saved'
+                                    ? 'Saved for later'
+                                    : status === 'queued'
+                                      ? `Queued for now · position ${deriveStopActionModel(trip, execution, stop.id)?.queuePosition}`
+                                      : status === 'completed'
+                                        ? modelStopHistory(stop.id)
+                                            ?.completedEarly
+                                          ? `Visited on ${modelStopHistory(stop.id)?.completedOnDayLabel ?? 'another day'}`
+                                          : 'Visited'
+                                        : `${stop.plannedVisitMinutes} min · ${stopSemanticLabel(stop)}`}
                               </span>
                             </div>
-                          )}
-                        <button
-                          className="itinerary-stop"
-                          onClick={() => setDetail(stop.id)}
-                          aria-label={`${stop.name}, ${status}, ${stop.priority}`}
-                        >
-                          <span
-                            className={`stop-number ${stop.priority === 'optional' ? 'optional-number' : ''}`}
-                          >
-                            {status === 'completed' ? (
-                              <Check size={17} />
-                            ) : status === 'skipped' ? (
-                              '−'
-                            ) : status === 'saved' ? (
-                              '◇'
+                            {status === 'current' ? (
+                              <b className="status-tag">NOW</b>
+                            ) : status === 'next' ? (
+                              <b className="status-tag next-tag">NEXT</b>
                             ) : (
-                              planIndex + 1
+                              <ChevronRight size={16} />
                             )}
-                          </span>
-                          {plannedStartTime && (
-                            <time
-                              className="itinerary-planned-time"
-                              dateTime={plannedStartTime}
-                            >
-                              {plannedStartTime}
-                            </time>
-                          )}
-                          <div>
-                            <strong>{stop.name}</strong>
-                            <span>
-                              {status === 'skipped'
-                                ? 'Skipped'
-                                : status === 'saved'
-                                  ? 'Saved for later'
-                                  : status === 'queued'
-                                    ? `Queued for now · position ${deriveStopActionModel(trip, execution, stop.id)?.queuePosition}`
-                                    : status === 'completed'
-                                      ? modelStopHistory(stop.id)
-                                          ?.completedEarly
-                                        ? `Visited on ${modelStopHistory(stop.id)?.completedOnDayLabel ?? 'another day'}`
-                                        : 'Visited'
-                                      : `${stop.plannedVisitMinutes} min · ${priorityLabel(stop)}`}
-                            </span>
-                          </div>
-                          {status === 'current' ? (
-                            <b className="status-tag">NOW</b>
-                          ) : status === 'next' ? (
-                            <b className="status-tag next-tag">NEXT</b>
-                          ) : (
-                            <ChevronRight size={16} />
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
+                          </button>
+                        </li>
+                      );
+                    },
+                  )}
                 </ol>
                 <div className="itinerary-end">
                   <Flag size={19} />
@@ -1687,7 +1701,9 @@ function ExecutionPage() {
               <div className="sheet-top">
                 <span className="eyebrow">
                   {detailPlannedDay
-                    ? `${detailPlannedDay.label.toUpperCase()} · STOP ${detailHistory?.itineraryPosition ?? '—'} OF ${detailPlannedDay.plannedStopCount}`
+                    ? detailStop.logisticsRole
+                      ? `${detailPlannedDay.label.toUpperCase()} · ${stopSemanticLabel(detailStop).toUpperCase()}`
+                      : `${detailPlannedDay.label.toUpperCase()} · STOP ${detailHistory?.sightseeingPosition ?? '—'} OF ${detailPlannedDay.sightseeingStopCount}`
                     : 'TRIP STOP'}{' '}
                   · {detailActionModel?.statusLabel.toUpperCase()}
                   {detailActionModel?.queuePosition
@@ -1705,9 +1721,9 @@ function ExecutionPage() {
                 {detailStop.name}
               </SheetTitle>
               <SheetDescription className="detail-description">
-                {detailStop.plannedVisitMinutes} min to explore
+                {detailStop.plannedVisitMinutes} min
                 {' · '}
-                {priorityLabel(detailStop)}
+                {stopSemanticLabel(detailStop)}
                 {detailPlanItem?.plannedStartTime && (
                   <>
                     {' · Planned '}
@@ -1806,7 +1822,7 @@ function ExecutionPage() {
                       </a>
                     )}
                     <button className="primary" onClick={done}>
-                      <Check size={20} /> Done
+                      <Check size={20} /> {detailActionModel.completionLabel}
                     </button>
                   </>
                 )}

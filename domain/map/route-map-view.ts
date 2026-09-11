@@ -4,8 +4,21 @@ import {
 } from '../execution/execution-order.ts';
 import { nextEligiblePendingStopId } from '../execution/transitions.ts';
 import { resolveWaypointSafeInboundLeg } from '../navigation/waypoint-safe-inbound-leg.ts';
+import {
+  isSightseeingStop,
+  stopKind,
+  stopMarkerLabel,
+  stopSemanticLabel,
+} from '../trip/stop-semantics.ts';
 import type { ForegroundCoordinates } from '../location/foreground-location.ts';
-import type { StopId, StopPriority, TravelMode, Trip } from '../trip/types.ts';
+import type {
+  LogisticsRole,
+  StopId,
+  StopKind,
+  StopPriority,
+  TravelMode,
+  Trip,
+} from '../trip/types.ts';
 import type { TripExecutionState } from '../execution/types.ts';
 
 export type RouteMapStopStatus =
@@ -22,7 +35,13 @@ export interface RouteMapStopView {
   name: string;
   latitude: number;
   longitude: number;
+  /** Canonical execution position; presentation numbering is separate. */
   itineraryPosition: number;
+  sightseeingPosition?: number;
+  markerLabel: string;
+  kind: StopKind;
+  logisticsRole?: LogisticsRole;
+  semanticLabel: string;
   priority: StopPriority;
   canSkip: boolean;
   status: RouteMapStopStatus;
@@ -120,16 +139,20 @@ function deriveDayRouteMapView(
         .map((entry) => entry.stopId)
         .filter((stopId) => !plannedStopIds.has(stopId))
     : [];
+  let sightseeingPosition = 0;
   const presentedStops = [
-    ...orderedPlan.map((item, index) => ({
-      stopId: item.stopId,
-      itineraryPosition: index + 1,
-    })),
-    ...executionOverrideStopIds.map((stopId, index) => ({
+    ...orderedPlan.map((item) => item.stopId),
+    ...executionOverrideStopIds,
+  ].map((stopId, index) => {
+    const stop = stopById.get(stopId);
+    const position =
+      stop && isSightseeingStop(stop) ? ++sightseeingPosition : undefined;
+    return {
       stopId,
-      itineraryPosition: orderedPlan.length + index + 1,
-    })),
-  ];
+      itineraryPosition: index + 1,
+      ...(position === undefined ? {} : { sightseeingPosition: position }),
+    };
+  });
   const stops = presentedStops.flatMap<RouteMapStopView>((item) => {
     const stop = stopById.get(item.stopId);
     const stopExecution = execution.stopExecutions[item.stopId];
@@ -158,6 +181,15 @@ function deriveDayRouteMapView(
         latitude: stop.latitude,
         longitude: stop.longitude,
         itineraryPosition: item.itineraryPosition,
+        ...(item.sightseeingPosition === undefined
+          ? {}
+          : { sightseeingPosition: item.sightseeingPosition }),
+        markerLabel: stopMarkerLabel(stop, item.sightseeingPosition),
+        kind: stopKind(stop),
+        ...(stop.logisticsRole === undefined
+          ? {}
+          : { logisticsRole: stop.logisticsRole }),
+        semanticLabel: stopSemanticLabel(stop),
         priority: stop.priority,
         canSkip: stop.canSkip,
         status,

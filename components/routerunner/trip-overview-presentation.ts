@@ -1,4 +1,5 @@
 import {
+  isSightseeingStop,
   orderedDayPlan,
   type Stop,
   type StopExecution,
@@ -23,6 +24,7 @@ export interface PlannedStopHistoryPresentation {
   readonly stop: Stop;
   readonly stopId: StopId;
   readonly itineraryPosition: number;
+  readonly sightseeingPosition?: number;
   readonly plannedStartTime?: string;
   readonly status: PlannedStopPresentationStatus;
   readonly completedOnDayId?: string;
@@ -40,6 +42,8 @@ export interface TripOverviewDayPresentation {
   readonly isExecutionDay: boolean;
   readonly isViewed: boolean;
   readonly plannedStopCount: number;
+  readonly sightseeingStopCount: number;
+  readonly logisticsStopCount: number;
   readonly completedStopCount: number;
   readonly skippedStopCount: number;
   readonly savedStopCount: number;
@@ -120,10 +124,14 @@ export function deriveTripOverviewPresentation(
   );
 
   const days = trip.days.map<TripOverviewDayPresentation>((day, dayIndex) => {
+    let sightseeingPosition = 0;
     const stops = orderedDayPlan(day).flatMap<PlannedStopHistoryPresentation>(
       (planItem, planIndex) => {
         const stop = stopsById.get(planItem.stopId);
         if (!stop) return [];
+        const position = isSightseeingStop(stop)
+          ? ++sightseeingPosition
+          : undefined;
         const execution = state.stopExecutions[planItem.stopId];
         const completedOnDayNumber = execution?.completedOnDayId
           ? dayNumberById.get(execution.completedOnDayId)
@@ -134,6 +142,9 @@ export function deriveTripOverviewPresentation(
             stop,
             stopId: stop.id,
             itineraryPosition: planIndex + 1,
+            ...(position === undefined
+              ? {}
+              : { sightseeingPosition: position }),
             ...(planItem.plannedStartTime === undefined
               ? {}
               : { plannedStartTime: planItem.plannedStartTime }),
@@ -172,6 +183,10 @@ export function deriveTripOverviewPresentation(
       isExecutionDay: state.executionDayId === day.id,
       isViewed: viewedDayId === day.id,
       plannedStopCount: stops.length,
+      sightseeingStopCount: stops.filter(({ stop }) => isSightseeingStop(stop))
+        .length,
+      logisticsStopCount: stops.filter(({ stop }) => !isSightseeingStop(stop))
+        .length,
       completedStopCount: stops.filter((stop) => stop.status === 'completed')
         .length,
       skippedStopCount: stops.filter((stop) => stop.status === 'skipped')

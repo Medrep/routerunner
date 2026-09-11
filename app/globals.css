@@ -761,6 +761,19 @@ body {
 .mapbox-stop-marker.optional {
   border-radius: 7px;
 }
+.mapbox-stop-marker.logistics {
+  width: auto;
+  min-width: 48px;
+  padding: 0 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+.mapbox-stop-marker.logistics.current {
+  width: auto;
+  min-width: 56px;
+  font-size: 11px;
+}
 .mapbox-via-marker {
   position: absolute;
   width: 14px;

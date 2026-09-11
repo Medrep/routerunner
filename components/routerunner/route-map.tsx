@@ -80,12 +80,12 @@ export default function RouteMap({
     for (const stop of viewRef.current.stops) {
       const markerButton = document.createElement('button');
       markerButton.type = 'button';
-      markerButton.className = `mapbox-stop-marker ${stop.status} ${stop.priority}`;
+      markerButton.className = `mapbox-stop-marker ${stop.status} ${stop.kind} ${stop.kind === 'sightseeing' ? stop.priority : ''}`;
       markerButton.dataset.label = stop.name;
-      markerButton.textContent = String(stop.itineraryPosition);
+      markerButton.textContent = stop.markerLabel;
       markerButton.setAttribute(
         'aria-label',
-        `${stop.itineraryPosition}. ${stop.name}, ${stop.status}, ${stop.priority}`,
+        `${stop.markerLabel}. ${stop.name}, ${stop.status}, ${stop.semanticLabel}`,
       );
       markerButton.title = stop.name;
       markerButton.addEventListener('click', () =>

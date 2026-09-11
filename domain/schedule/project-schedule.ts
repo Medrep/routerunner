@@ -3,6 +3,7 @@ import {
   isWaitingDoNow,
   projectedExecutionStopIds,
 } from '../execution/execution-order.ts';
+import { isSightseeingStop } from '../trip/stop-semantics.ts';
 import {
   isTripComplete,
   tripExecutionLifecycle,
@@ -213,6 +214,7 @@ export function isRecommendationTargetEligible(
   return Boolean(
     state.executionDayId &&
     stop?.canSkip &&
+    isSightseeingStop(stop) &&
     execution?.status === 'pending' &&
     execution.scheduledDayId === state.executionDayId &&
     state.currentStopId !== stopId &&

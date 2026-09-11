@@ -2,7 +2,7 @@ declare const stopIdBrand: unique symbol;
 declare const stopVisitPlanItemIdBrand: unique symbol;
 declare const postDayDestinationIdBrand: unique symbol;
 
-/** Opaque sightseeing-stop identity within a trip. */
+/** Opaque Stop identity within a trip. */
 export type StopId = string & { readonly [stopIdBrand]: 'StopId' };
 
 /** Opaque identity scoped to one Stop's prepared internal visit plan. */
@@ -33,6 +33,8 @@ export function createPostDayDestinationId(
 }
 
 export type StopPriority = 'must' | 'normal' | 'optional';
+export type StopKind = 'sightseeing' | 'logistics';
+export type LogisticsRole = 'start' | 'accommodation' | 'transfer';
 
 /** Immutable prepared content for one ordered place or task inside a Stop. */
 export interface StopVisitPlanItem {
@@ -64,6 +66,10 @@ export interface Stop {
   id: StopId;
   name: string;
   shortName?: string;
+  /** Omitted for backward compatibility; an omitted kind is sightseeing. */
+  kind?: StopKind;
+  /** Required when kind is logistics and invalid for sightseeing Stops. */
+  logisticsRole?: LogisticsRole;
   /** Prepared field context explaining why to stop and what to know or do. */
   visitBrief?: string;
   /** Prepared, ordered things to notice, check, or do at the stop. */

@@ -6,6 +6,16 @@ export {
 export { originalPlannedDayId } from './original-planned-day.ts';
 export { orderedStopVisitPlanItems } from './ordered-stop-visit-plan.ts';
 export {
+  isLogisticsStop,
+  isSightseeingStop,
+  logisticsRoleLabel,
+  logisticsRoleMarkerLabel,
+  stopActivityLabel,
+  stopKind,
+  stopMarkerLabel,
+  stopSemanticLabel,
+} from './stop-semantics.ts';
+export {
   MAX_NAVIGATION_WAYPOINTS,
   MAX_STOP_HIGHLIGHTS,
   validateTrip,
@@ -21,12 +31,14 @@ export type {
   ExecutionRule,
   Leg,
   LegGeometryPoint,
+  LogisticsRole,
   NavigationWaypoint,
   PostDayDestination,
   PostDayDestinationId,
   PostDayNavigationTarget,
   Stop,
   StopId,
+  StopKind,
   StopPriority,
   StopVisitPlan,
   StopVisitPlanItem,

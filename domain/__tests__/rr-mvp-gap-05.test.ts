@@ -734,7 +734,7 @@ void test('schema stays versioned and production wiring keeps day switching dist
   assert.doesNotMatch(selectionBody, /setExecution|switchExecutionDay|persist/);
   assert.match(source, /function requestExecutionDaySwitch/);
   assert.match(source, /switchExecutionDay\(/);
-  assert.match(source, /View tomorrow/);
+  assert.match(source, /Preview day/);
   assert.match(source, /Start \{nextPlannedOverviewDay\.label\}/);
   assert.match(source, /leftover_resolution_required/);
   assert.match(source, /Save all for later/);

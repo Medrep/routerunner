@@ -1,3 +1,4 @@
+import { isLogisticsStop } from '../trip/stop-semantics.ts';
 import type { StopId, Trip } from '../trip/types.ts';
 import { isTripComplete } from './lifecycle.ts';
 import { isActiveDoNowOverride, waitingDoNowQueue } from './execution-order.ts';
@@ -27,6 +28,7 @@ export interface StopActionModel {
   readonly role: StopExecutionRole;
   readonly statusLabel: string;
   readonly queuePosition?: number;
+  readonly completionLabel: 'Done' | 'Continue' | 'Arrived';
   readonly actions: StopActionEligibility;
 }
 
@@ -79,15 +81,36 @@ export function deriveStopActionModel(
             : role === 'skipped'
               ? 'Skipped'
               : 'Planned';
+  const completionLabel = isLogisticsStop(stop)
+    ? stop.logisticsRole === 'start'
+      ? 'Continue'
+      : stop.logisticsRole === 'accommodation'
+        ? 'Arrived'
+        : 'Done'
+    : 'Done';
 
   if (trip.id !== state.tripId || isTripComplete(trip, state)) {
-    return { stopId, role, statusLabel, actions: noActions };
+    return { stopId, role, statusLabel, completionLabel, actions: noActions };
   }
   if (role === 'current' || role === 'current_do_now') {
+    if (isLogisticsStop(stop)) {
+      return {
+        stopId,
+        role,
+        statusLabel,
+        completionLabel,
+        actions: {
+          ...noActions,
+          navigate: stop.logisticsRole !== 'start',
+          done: true,
+        },
+      };
+    }
     return {
       stopId,
       role,
       statusLabel,
+      completionLabel,
       actions: {
         ...noActions,
         navigate: true,
@@ -102,8 +125,11 @@ export function deriveStopActionModel(
       stopId,
       role,
       statusLabel,
+      completionLabel,
       queuePosition: waitingIndex + 1,
-      actions: { ...noActions, cancelDoNow: true },
+      actions: isLogisticsStop(stop)
+        ? noActions
+        : { ...noActions, cancelDoNow: true },
     };
   }
 
@@ -114,9 +140,11 @@ export function deriveStopActionModel(
     stopId,
     role,
     statusLabel,
-    actions: canRecordNonCurrent
-      ? { ...noActions, doNow: true, alreadyVisited: true }
-      : noActions,
+    completionLabel,
+    actions:
+      canRecordNonCurrent && !isLogisticsStop(stop)
+        ? { ...noActions, doNow: true, alreadyVisited: true }
+        : noActions,
   };
 }
 

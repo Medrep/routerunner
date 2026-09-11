@@ -21,6 +21,7 @@ export type TripValidationCode =
   | 'INVALID_TIME'
   | 'INVALID_TIME_ZONE'
   | 'INVALID_NUMBER'
+  | 'INVALID_STOP_SEMANTICS'
   | 'EMPTY_VISIT_PLAN'
   | 'DUPLICATE_VISIT_PLAN_ITEM_ID'
   | 'DUPLICATE_VISIT_PLAN_ITEM_ORDER'
@@ -157,7 +158,7 @@ export function validateTrip(trip: Trip): TripValidationResult {
       add(
         'POST_DAY_IDENTITY_COLLISION',
         `${path}.id`,
-        `Post-day destination "${destination.id}" also identifies a sightseeing stop.`,
+        `Post-day destination "${destination.id}" also identifies a Stop.`,
       );
     const target = destination.navigationTarget;
     if ('address' in target) {
@@ -180,7 +181,7 @@ export function validateTrip(trip: Trip): TripValidationResult {
       add(
         'POST_DAY_IDENTITY_COLLISION',
         path,
-        `Post-day destination "${value}" cannot be used as a sightseeing reference.`,
+        `Post-day destination "${value}" cannot be used as a Stop reference.`,
       );
     if (!stopIds.has(value))
       add(
@@ -220,6 +221,31 @@ export function validateTrip(trip: Trip): TripValidationResult {
 
   trip.stops.forEach((stop, index) => {
     const path = `stops[${index}]`;
+    const kind = stop.kind ?? 'sightseeing';
+    if (kind !== 'sightseeing' && kind !== 'logistics')
+      add(
+        'INVALID_STOP_SEMANTICS',
+        `${path}.kind`,
+        'Stop kind must be sightseeing or logistics.',
+      );
+    if (kind === 'logistics') {
+      if (
+        stop.logisticsRole !== 'start' &&
+        stop.logisticsRole !== 'accommodation' &&
+        stop.logisticsRole !== 'transfer'
+      )
+        add(
+          'INVALID_STOP_SEMANTICS',
+          `${path}.logisticsRole`,
+          'A logistics Stop requires a start, accommodation, or transfer role.',
+        );
+    } else if (stop.logisticsRole !== undefined) {
+      add(
+        'INVALID_STOP_SEMANTICS',
+        `${path}.logisticsRole`,
+        'A sightseeing Stop cannot have a logistics role.',
+      );
+    }
     preparedContent(stop, path, 'A Stop');
     if (stop.visitPlan !== undefined) {
       const itemIds = new Set<string>();

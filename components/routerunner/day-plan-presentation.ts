@@ -1,5 +1,7 @@
 import {
+  isSightseeingStop,
   orderedDayPlan,
+  stopMarkerLabel,
   type DayPlanItem,
   type Stop,
   type StopId,
@@ -10,6 +12,8 @@ export interface DayPlanStopPresentation {
   readonly planItem: DayPlanItem;
   readonly stop: Stop;
   readonly plannedStartTime?: string;
+  readonly sightseeingPosition?: number;
+  readonly markerLabel: string;
 }
 
 /**
@@ -22,13 +26,20 @@ export function dayPlanPresentationModel(
 ): DayPlanStopPresentation[] {
   const stopsById = new Map(stops.map((stop) => [stop.id, stop]));
 
+  let sightseeingPosition = 0;
   return orderedDayPlan(day).flatMap((planItem) => {
     const stop = stopsById.get(planItem.stopId);
+    const position =
+      stop && isSightseeingStop(stop) ? ++sightseeingPosition : undefined;
     return stop
       ? [
           {
             planItem,
             stop,
+            ...(position === undefined
+              ? {}
+              : { sightseeingPosition: position }),
+            markerLabel: stopMarkerLabel(stop, position),
             ...(planItem.plannedStartTime !== undefined
               ? { plannedStartTime: planItem.plannedStartTime }
               : {}),

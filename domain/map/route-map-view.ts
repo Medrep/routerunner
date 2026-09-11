@@ -65,6 +65,30 @@ export function deriveRouteMapView(
   const day =
     trip.days.find((candidate) => candidate.id === execution.executionDayId) ??
     trip.days[0];
+  return deriveDayRouteMapView(trip, execution, day, true, userLocation);
+}
+
+/**
+ * Shows one original planned day without applying Current/Next or active
+ * inbound navigation context from another execution day.
+ */
+export function deriveDayPreviewRouteMapView(
+  trip: Trip,
+  execution: TripExecutionState,
+  viewedDayId: string,
+  userLocation?: ForegroundCoordinates,
+): RouteMapView {
+  const day = trip.days.find((candidate) => candidate.id === viewedDayId);
+  return deriveDayRouteMapView(trip, execution, day, false, userLocation);
+}
+
+function deriveDayRouteMapView(
+  trip: Trip,
+  execution: TripExecutionState,
+  day: Trip['days'][number] | undefined,
+  includeExecutionContext: boolean,
+  userLocation?: ForegroundCoordinates,
+): RouteMapView {
   if (!day) {
     return {
       stops: [],
@@ -75,9 +99,13 @@ export function deriveRouteMapView(
     };
   }
 
-  const nextStopId = nextEligiblePendingStopId(trip, execution);
+  const nextStopId = includeExecutionContext
+    ? nextEligiblePendingStopId(trip, execution)
+    : undefined;
   const stopById = new Map(trip.stops.map((stop) => [stop.id, stop]));
-  const waypointSafeInboundLeg = resolveWaypointSafeInboundLeg(trip, execution);
+  const waypointSafeInboundLeg = includeExecutionContext
+    ? resolveWaypointSafeInboundLeg(trip, execution)
+    : undefined;
   const navigationViaPoints: readonly RouteMapNavigationViaPointView[] =
     waypointSafeInboundLeg?.navigationWaypoints?.map((point) => ({
       longitude: point.longitude,
@@ -90,9 +118,11 @@ export function deriveRouteMapView(
     if (!stop || !stopExecution) return [];
 
     let status: RouteMapStopStatus = 'future';
-    if (execution.currentStopId === item.stopId) status = 'current';
-    else if (nextStopId === item.stopId) status = 'next';
-    else if (stopExecution.status === 'completed') status = 'completed';
+    if (includeExecutionContext && execution.currentStopId === item.stopId) {
+      status = 'current';
+    } else if (includeExecutionContext && nextStopId === item.stopId) {
+      status = 'next';
+    } else if (stopExecution.status === 'completed') status = 'completed';
     else if (stopExecution.status === 'skipped') status = 'skipped';
     else if (
       stopExecution.status === 'pending' &&

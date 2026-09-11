@@ -470,6 +470,28 @@ body {
   font-size: 12px;
   color: #53635c;
 }
+.overview-trigger {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 8px 12px;
+  border: 1px solid #c7d1c9;
+  border-radius: 9px;
+  color: #285443;
+  background: #f5f8f4;
+  font-size: 13px;
+  font-weight: 700;
+}
+.overview-trigger:hover,
+.overview-trigger[aria-current='page'] {
+  border-color: #99b3a3;
+  background: #e6efe8;
+}
+.overview-trigger + .day-chip {
+  margin-left: 6px;
+}
 .trip-heading {
   padding: 32px 0 27px;
 }
@@ -508,6 +530,128 @@ body {
 }
 .schedule.unavailable i {
   background: #7a8580;
+}
+.view-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: right;
+}
+.view-status strong {
+  color: #285443;
+  font-size: 15px;
+}
+.view-status span {
+  color: #5b6c63;
+  font-size: 13px;
+}
+.view-status.preview strong {
+  color: #6a5a22;
+}
+.trip-overview {
+  padding: 26px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fff;
+}
+.trip-overview-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--border);
+}
+.trip-overview-heading .eyebrow {
+  margin-bottom: 6px;
+}
+.trip-overview-heading > span {
+  color: #607067;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.trip-overview-days {
+  display: grid;
+  gap: 14px;
+  margin-top: 20px;
+}
+.trip-overview-day {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 20px;
+  border: 1px solid #d4ddd5;
+  border-radius: 12px;
+  background: #f8faf7;
+}
+.trip-overview-day.active {
+  border-color: #9ebdab;
+  background: #f2f7f2;
+}
+.trip-overview-day.completed {
+  background: #f4f6f3;
+}
+.trip-overview-day.viewed {
+  box-shadow: inset 4px 0 #176b50;
+}
+.trip-overview-day-copy {
+  min-width: 0;
+  flex: 1;
+}
+.trip-overview-day-title {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+.trip-overview-number {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #adc0b3;
+  border-radius: 50%;
+  color: #245c47;
+  background: #fff;
+  font-size: 18px;
+  font-weight: 750;
+}
+.trip-overview-day-title .eyebrow {
+  margin-bottom: 4px;
+  color: #4f675a;
+}
+.trip-overview-day-title h3 {
+  font-size: 20px;
+}
+.trip-overview-day-title time {
+  display: block;
+  margin-top: 4px;
+  color: #64746b;
+  font-size: 13px;
+}
+.trip-overview-summary,
+.trip-overview-stop-names {
+  margin-left: 55px;
+  color: #53665c;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.trip-overview-summary {
+  margin-top: 12px;
+  font-weight: 700;
+}
+.trip-overview-stop-names {
+  margin-top: 4px;
+}
+.trip-overview-day > button {
+  max-width: 145px;
+  flex: 0 0 145px;
+}
+.trip-overview-note {
+  margin: 18px 4px 0;
+  color: #617068;
+  font-size: 13px;
+  text-align: center;
 }
 .workspace {
   grid-template-columns: 1.23fr 1fr;
@@ -808,6 +952,49 @@ body {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 18px;
+}
+.preview-context {
+  display: grid;
+  gap: 17px;
+}
+.preview-context > div:first-child strong {
+  font-size: 25px;
+  letter-spacing: -0.6px;
+}
+.preview-context > div:first-child p {
+  margin-top: 7px;
+  color: #566a5f;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.preview-execution-context {
+  padding: 15px 16px;
+  border-radius: 10px;
+  color: #344b3e;
+  background: #e9efe9;
+}
+.preview-execution-context span,
+.preview-execution-context strong,
+.preview-execution-context p {
+  display: block;
+}
+.preview-execution-context span {
+  color: #5b6e62;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
+.preview-execution-context strong {
+  margin-top: 5px;
+  font-size: 17px;
+}
+.preview-execution-context p {
+  margin-top: 3px;
+  color: #56695e;
+  font-size: 13px;
+}
+.preview-context > button {
+  width: 100%;
 }
 .active-label {
   font-size: 12px;
@@ -1648,6 +1835,14 @@ footer small {
   .brand > strong {
     font-size: 20px;
   }
+  .overview-trigger {
+    min-height: 40px;
+    padding: 7px 9px;
+    font-size: 12px;
+  }
+  .overview-trigger svg {
+    width: 15px;
+  }
   .day-chip {
     font-size: 12px;
     gap: 4px;
@@ -1672,6 +1867,42 @@ footer small {
   }
   .schedule {
     gap: 5px;
+  }
+  .view-status {
+    gap: 4px;
+  }
+  .view-status strong,
+  .view-status span {
+    font-size: 12px;
+  }
+  .trip-overview {
+    padding: 19px 15px;
+    border-radius: 14px;
+  }
+  .trip-overview-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 17px;
+  }
+  .trip-overview-days {
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .trip-overview-day {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 16px;
+    padding: 17px;
+  }
+  .trip-overview-day > button {
+    width: 100%;
+    max-width: none;
+    flex-basis: auto;
+  }
+  .trip-overview-summary,
+  .trip-overview-stop-names {
+    margin-left: 0;
   }
   .map-column {
     position: static;
@@ -1722,6 +1953,9 @@ footer small {
   }
   .execution-top {
     margin-bottom: 14px;
+  }
+  .preview-context > div:first-child strong {
+    font-size: 23px;
   }
   .active-label {
     font-size: 12px;
@@ -1851,6 +2085,9 @@ footer small {
   }
   .day-chip {
     display: none;
+  }
+  .overview-trigger {
+    margin-left: auto;
   }
   .trip-heading {
     gap: 10px;

@@ -353,7 +353,7 @@ function ExecutionPage() {
   const postDayNavigationUrl = postDayDestination
     ? postDayGoogleMapsNavigationUrl(postDayDestination)
     : undefined;
-  const location = useForegroundLocation(started);
+  const { location, retryLocation } = useForegroundLocation(started);
   const current =
     trip.stops.find((stop) => stop.id === execution.currentStopId) ?? null;
   const currentActionModel = current
@@ -478,12 +478,10 @@ function ExecutionPage() {
   }
 
   const mapView = useMemo(() => {
-    const coordinates =
-      location.status === 'available' ? location.coordinates : undefined;
     return isReadOnlyPreview
-      ? deriveDayPreviewRouteMapView(trip, execution, day.id, coordinates)
-      : deriveRouteMapView(trip, execution, coordinates);
-  }, [day.id, execution, isReadOnlyPreview, location, trip]);
+      ? deriveDayPreviewRouteMapView(trip, execution, day.id)
+      : deriveRouteMapView(trip, execution);
+  }, [day.id, execution, isReadOnlyPreview, trip]);
   const wholeTripMapView = useMemo(
     () => deriveWholeTripMapView(trip, execution),
     [execution, trip],
@@ -1008,7 +1006,11 @@ function ExecutionPage() {
           <div className="workspace">
             <div className="map-column">
               <section className="map-panel">
-                <RouteMap view={mapView} location={location} />
+                <RouteMap
+                  view={mapView}
+                  location={location}
+                  onRetryLocation={retryLocation}
+                />
                 <button className="map-expand" onClick={() => setFull(true)}>
                   <Expand size={17} />
                   Full map
@@ -1711,7 +1713,12 @@ function ExecutionPage() {
             execution state.
           </DialogDescription>
           <div className="full-map-body">
-            <RouteMap view={mapView} location={location} full />
+            <RouteMap
+              view={mapView}
+              location={location}
+              onRetryLocation={retryLocation}
+              full
+            />
           </div>
           <DialogClose className="full-map-back">
             <ArrowLeft size={20} />

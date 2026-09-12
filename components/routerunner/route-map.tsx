@@ -23,13 +23,17 @@ function locationCaption(location: ForegroundLocationState): string {
     case 'locating':
       return 'Finding your foreground location…';
     case 'available':
-      return `Location available · ±${Math.round(location.coordinates.accuracy)} m`;
+      return `Location current · ±${Math.round(location.coordinates.accuracy)} m`;
+    case 'stale':
+      return `Location outdated · last accuracy ±${Math.round(location.coordinates.accuracy)} m`;
     case 'denied':
       return 'Location denied · planned map remains available';
     case 'unavailable':
       return 'Location unavailable · planned map remains available';
     case 'timeout':
       return 'Location timed out · planned map remains available';
+    case 'unsupported':
+      return 'Location unavailable in this browser';
     case 'error':
       return 'Location error · planned map remains available';
   }
@@ -61,10 +65,12 @@ function fitCoordinates(
 export default function RouteMap({
   view,
   location,
+  onRetryLocation,
   full = false,
 }: {
   view: RouteMapView;
   location: ForegroundLocationState;
+  onRetryLocation: () => void;
   full?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -74,13 +80,14 @@ export default function RouteMap({
   const viaMarkersRef = useRef(new Map<number, Marker>());
   const userMarkerRef = useRef<Marker | null>(null);
   const viewRef = useRef(view);
+  const locationRef = useRef(location);
   const fittedCoordinatesKeyRef = useRef<string | undefined>(undefined);
   const [selectedStopId, setSelectedStopId] = useState<StopId>();
   const [runtimeError, setRuntimeError] = useState<string>();
   const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
   const selectedStop = deriveRouteMapMarkerDetail(view, selectedStopId);
 
-  function updateOverlays(map: MapboxMap): void {
+  function updatePlannedOverlays(map: MapboxMap): void {
     const mapbox = moduleRef.current;
     if (!mapbox || !map.isStyleLoaded()) return;
 
@@ -126,27 +133,48 @@ export default function RouteMap({
         .addTo(map);
       stopMarkersRef.current.set(String(stop.stopId), marker);
     }
+  }
 
-    userMarkerRef.current?.remove();
-    userMarkerRef.current = null;
-    if (viewRef.current.userLocation) {
-      const userElement = document.createElement('div');
-      userElement.className = 'mapbox-user-marker';
-      userElement.setAttribute('role', 'img');
-      userElement.setAttribute(
-        'aria-label',
-        'Your current foreground location',
-      );
-      userMarkerRef.current = new mapbox.default.Marker({
-        element: userElement,
-        anchor: 'center',
-      })
-        .setLngLat([
-          viewRef.current.userLocation.longitude,
-          viewRef.current.userLocation.latitude,
-        ])
-        .addTo(map);
+  function updateUserMarker(map: MapboxMap): void {
+    const mapbox = moduleRef.current;
+    if (!mapbox || !map.isStyleLoaded()) return;
+    const currentLocation = locationRef.current;
+    if (currentLocation.status !== 'available') {
+      userMarkerRef.current?.remove();
+      userMarkerRef.current = null;
+      return;
     }
+    const longitudeLatitude: [number, number] = [
+      currentLocation.coordinates.longitude,
+      currentLocation.coordinates.latitude,
+    ];
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setLngLat(longitudeLatitude);
+      return;
+    }
+    const userElement = document.createElement('div');
+    userElement.className = 'mapbox-user-marker';
+    userElement.setAttribute('role', 'img');
+    userElement.setAttribute('aria-label', 'Your current foreground location');
+    userMarkerRef.current = new mapbox.default.Marker({
+      element: userElement,
+      anchor: 'center',
+    })
+      .setLngLat(longitudeLatitude)
+      .addTo(map);
+  }
+
+  function handleLocationControl(): void {
+    const map = mapRef.current;
+    if (location.status === 'available' && map) {
+      map.easeTo({
+        center: [location.coordinates.longitude, location.coordinates.latitude],
+        zoom: Math.max(map.getZoom(), 14),
+        duration: 500,
+      });
+      return;
+    }
+    onRetryLocation();
   }
 
   useEffect(() => {
@@ -187,7 +215,8 @@ export default function RouteMap({
         if (full) map.addControl(new mapbox.default.NavigationControl());
         map.on('load', () => {
           map.resize();
-          updateOverlays(map);
+          updatePlannedOverlays(map);
+          updateUserMarker(map);
           fitCoordinates(
             mapbox,
             map,
@@ -222,7 +251,7 @@ export default function RouteMap({
     viewRef.current = view;
     const map = mapRef.current;
     if (map) {
-      updateOverlays(map);
+      updatePlannedOverlays(map);
       const coordinatesKey = JSON.stringify(view.initialBoundsCoordinates);
       if (
         moduleRef.current &&
@@ -239,6 +268,19 @@ export default function RouteMap({
       }
     }
   }, [full, view]);
+
+  useEffect(() => {
+    locationRef.current = location;
+    const map = mapRef.current;
+    if (map) updateUserMarker(map);
+  }, [location]);
+
+  const retryable =
+    location.status === 'stale' ||
+    location.status === 'denied' ||
+    location.status === 'unavailable' ||
+    location.status === 'timeout' ||
+    location.status === 'error';
 
   if (mapboxTokenState(token) === 'missing') {
     return (
@@ -266,9 +308,29 @@ export default function RouteMap({
         </span>
         <span className="north">↑ N</span>
       </div>
+      {location.status !== 'inactive' && (
+        <div className="map-location-panel">
+          <output aria-live="polite">{locationCaption(location)}</output>
+          {location.status !== 'unsupported' && (
+            <button
+              type="button"
+              aria-label="Show my location"
+              disabled={location.status === 'locating'}
+              onClick={handleLocationControl}
+            >
+              {location.status === 'available'
+                ? 'My location'
+                : location.status === 'locating'
+                  ? 'Locating…'
+                  : retryable
+                    ? 'Retry location'
+                    : 'My location'}
+            </button>
+          )}
+        </div>
+      )}
       {!full && !selectedStop && (
         <output className="map-caption">
-          <span>{locationCaption(location)}</span>
           <span>Itinerary stop overview · not turn-by-turn routing</span>
           {runtimeError && <span>{runtimeError}</span>}
         </output>

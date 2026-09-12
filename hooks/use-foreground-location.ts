@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ForegroundLocationController,
   type ForegroundLocationState,
@@ -9,11 +9,13 @@ import {
 
 const inactiveLocation: ForegroundLocationState = { status: 'inactive' };
 
-export function useForegroundLocation(
-  executionActive: boolean,
-): ForegroundLocationState {
+export function useForegroundLocation(executionActive: boolean): {
+  location: ForegroundLocationState;
+  retryLocation: () => void;
+} {
   const [location, setLocation] =
     useState<ForegroundLocationState>(inactiveLocation);
+  const controllerRef = useRef<ForegroundLocationController>(null);
 
   useEffect(() => {
     const visibility: VisibilityAdapter = {
@@ -28,10 +30,24 @@ export function useForegroundLocation(
       visibility,
       setLocation,
     );
-    controller.setActive(executionActive);
+    controllerRef.current = controller;
 
-    return () => controller.dispose();
+    return () => {
+      controllerRef.current = null;
+      controller.dispose();
+    };
+  }, []);
+
+  useEffect(() => {
+    controllerRef.current?.setActive(executionActive);
   }, [executionActive]);
 
-  return location;
+  const retryLocation = useCallback(() => {
+    controllerRef.current?.retry();
+  }, []);
+
+  return {
+    location: executionActive ? location : inactiveLocation,
+    retryLocation,
+  };
 }

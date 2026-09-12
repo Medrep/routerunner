@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  FOREGROUND_GEOLOCATION_OPTIONS,
+  FOREGROUND_LOCATION_FRESHNESS_MS,
   ForegroundLocationController,
   buildGoogleMapsNavigationUrl,
   createInitialTripExecutionState,
@@ -11,9 +14,11 @@ import {
   googleMapsTravelMode,
   mapGeolocationError,
   mapboxTokenState,
+  projectSchedule,
   startDay,
   startDayAndBuildNavigation,
   type ForegroundLocationState,
+  type ForegroundLocationTimerAdapter,
   type GeolocationAdapter,
   type Trip,
   type TripExecutionState,
@@ -53,6 +58,7 @@ class FakeVisibility implements VisibilityAdapter {
 class FakeGeolocation implements GeolocationAdapter {
   watchCalls = 0;
   cleared: number[] = [];
+  options: PositionOptions[] = [];
   success?: PositionCallback;
   failure?: PositionErrorCallback | null;
   callbacks = new Map<
@@ -63,10 +69,12 @@ class FakeGeolocation implements GeolocationAdapter {
   watchPosition(
     successCallback: PositionCallback,
     errorCallback?: PositionErrorCallback | null,
+    options?: PositionOptions,
   ): number {
     this.watchCalls += 1;
     this.success = successCallback;
     this.failure = errorCallback;
+    this.options.push(options ?? {});
     this.callbacks.set(this.watchCalls, {
       success: successCallback,
       failure: errorCallback,
@@ -112,18 +120,55 @@ class FakeGeolocation implements GeolocationAdapter {
   }
 }
 
+class FakeClock implements ForegroundLocationTimerAdapter {
+  now = Date.parse(startedAt);
+  private nextTimerId = 1;
+  private readonly timers = new Map<
+    number,
+    { dueAt: number; callback: () => void }
+  >();
+
+  setTimeout(callback: () => void, delayMs: number): number {
+    const timerId = this.nextTimerId++;
+    this.timers.set(timerId, { dueAt: this.now + delayMs, callback });
+    return timerId;
+  }
+
+  clearTimeout(timerId: unknown): void {
+    if (typeof timerId === 'number') this.timers.delete(timerId);
+  }
+
+  advance(milliseconds: number): void {
+    this.now += milliseconds;
+    while (true) {
+      const due = [...this.timers.entries()]
+        .filter(([, timer]) => timer.dueAt <= this.now)
+        .sort((left, right) => left[1].dueAt - right[1].dueAt)[0];
+      if (!due) return;
+      this.timers.delete(due[0]);
+      due[1].callback();
+    }
+  }
+
+  get pendingTimerCount(): number {
+    return this.timers.size;
+  }
+}
+
 function collectLocationController(
   geolocation: GeolocationAdapter | undefined,
   visibility = new FakeVisibility(),
+  clock = new FakeClock(),
 ) {
   const states: ForegroundLocationState[] = [];
   const controller = new ForegroundLocationController(
     geolocation,
     visibility,
     (state) => states.push(state),
-    () => Date.parse(startedAt),
+    () => clock.now,
+    clock,
   );
-  return { controller, states, visibility };
+  return { controller, states, visibility, clock };
 }
 
 function initialState(trip: Trip = copenhagenTrip) {
@@ -136,11 +181,11 @@ function activeState(trip: Trip = copenhagenTrip) {
   return result.state;
 }
 
-void test('unavailable geolocation maps to a deterministic state', () => {
+void test('unsupported geolocation maps to a deterministic nonfatal state', () => {
   const { controller, states } = collectLocationController(undefined);
   controller.setActive(true);
   assert.deepEqual(states.at(-1), {
-    status: 'unavailable',
+    status: 'unsupported',
     message: 'Browser geolocation is unavailable.',
   });
   controller.dispose();
@@ -154,7 +199,20 @@ void test('tracking starts only for an active execution on a visible page', () =
   controller.setActive(true);
   assert.equal(geolocation.watchCalls, 1);
   assert.deepEqual(states.at(-1), { status: 'locating' });
+  assert.deepEqual(geolocation.options, [FOREGROUND_GEOLOCATION_OPTIONS]);
   controller.dispose();
+});
+
+void test('repeated reconciliation never creates a duplicate watch', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, visibility } = collectLocationController(geolocation);
+  controller.setActive(true);
+  controller.setActive(true);
+  visibility.setVisible(true);
+  assert.equal(geolocation.watchCalls, 1);
+  assert.equal(visibility.listeners.size, 1);
+  controller.dispose();
+  assert.equal(visibility.listeners.size, 0);
 });
 
 void test('a hidden page defers tracking until it becomes visible', () => {
@@ -208,6 +266,21 @@ void test('hidden visibility clears the watch and visible restarts it', () => {
   assert.deepEqual(geolocation.cleared, [1, 2]);
 });
 
+void test('hidden visibility immediately removes an available fix', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, visibility, clock } =
+    collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendPosition(55.6841, 12.593, 6, clock.now);
+  assert.equal(states.at(-1)?.status, 'available');
+
+  visibility.setVisible(false);
+
+  assert.deepEqual(states.at(-1), { status: 'inactive' });
+  assert.equal(clock.pendingTimerCount, 0);
+  controller.dispose();
+});
+
 void test('deactivation and disposal clear active location watches', () => {
   const geolocation = new FakeGeolocation();
   const { controller } = collectLocationController(geolocation);
@@ -217,6 +290,125 @@ void test('deactivation and disposal clear active location watches', () => {
   controller.setActive(true);
   controller.dispose();
   assert.deepEqual(geolocation.cleared, [1, 2]);
+});
+
+void test('deactivation immediately removes an available fix and its timer', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, clock } = collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendPosition(55.6841, 12.593, 6, clock.now);
+  assert.equal(clock.pendingTimerCount, 1);
+
+  controller.setActive(false);
+
+  assert.deepEqual(states.at(-1), { status: 'inactive' });
+  assert.equal(clock.pendingTimerCount, 0);
+  controller.dispose();
+});
+
+void test('a silent successful fix expires just after the 60 second threshold', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, clock } = collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendPosition(55.6841, 12.593, 8, clock.now);
+
+  clock.advance(FOREGROUND_LOCATION_FRESHNESS_MS);
+  assert.equal(states.at(-1)?.status, 'available');
+  clock.advance(1);
+
+  assert.deepEqual(states.at(-1), {
+    status: 'stale',
+    coordinates: {
+      latitude: 55.6841,
+      longitude: 12.593,
+      accuracy: 8,
+      observedAt: startedAt,
+    },
+  });
+  assert.equal(clock.pendingTimerCount, 0);
+  controller.dispose();
+});
+
+void test('a newer fix replaces the stale timer without accumulating timers', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, clock } = collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendPosition(55.6841, 12.593, 8, clock.now);
+  clock.advance(10_000);
+  geolocation.sendPosition(55.6842, 12.5931, 7, clock.now);
+
+  assert.equal(clock.pendingTimerCount, 1);
+  clock.advance(FOREGROUND_LOCATION_FRESHNESS_MS + 1);
+  assert.equal(states.at(-1)?.status, 'stale');
+  controller.dispose();
+});
+
+void test('disposal clears the stale timer', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, clock } = collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendPosition(55.6841, 12.593, 8, clock.now);
+  assert.equal(clock.pendingTimerCount, 1);
+  controller.dispose();
+  assert.equal(clock.pendingTimerCount, 0);
+});
+
+void test('identical fixes do not publish or reschedule redundant state', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, clock } = collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendPosition(55.6841, 12.593, 8, clock.now);
+  const stateCount = states.length;
+  geolocation.sendPosition(55.6841, 12.593, 8, clock.now);
+  assert.equal(states.length, stateCount);
+  assert.equal(clock.pendingTimerCount, 1);
+  controller.dispose();
+});
+
+for (const [code, status] of [
+  [2, 'unavailable'],
+  [3, 'timeout'],
+] as const) {
+  void test(`${status} stops tracking and explicit retry starts one watch`, () => {
+    const geolocation = new FakeGeolocation();
+    const { controller, states } = collectLocationController(geolocation);
+    controller.setActive(true);
+    geolocation.sendError(code, status);
+    assert.equal(states.at(-1)?.status, status);
+    assert.deepEqual(geolocation.cleared, [1]);
+
+    controller.retry();
+
+    assert.equal(geolocation.watchCalls, 2);
+    assert.deepEqual(states.at(-1), { status: 'locating' });
+    controller.dispose();
+  });
+}
+
+void test('permission denial never retries without direct user action', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, clock } = collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendError(1, 'denied');
+  clock.advance(FOREGROUND_LOCATION_FRESHNESS_MS * 2);
+  assert.equal(states.at(-1)?.status, 'denied');
+  assert.equal(geolocation.watchCalls, 1);
+
+  controller.retry();
+  assert.equal(geolocation.watchCalls, 2);
+  controller.dispose();
+});
+
+void test('retry is inert while hidden or execution-inactive', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, visibility } = collectLocationController(geolocation);
+  controller.retry();
+  assert.equal(geolocation.watchCalls, 0);
+  controller.setActive(true);
+  visibility.setVisible(false);
+  controller.retry();
+  assert.equal(geolocation.watchCalls, 1);
+  controller.dispose();
 });
 
 void test('stale error cannot alter state or clear a replacement watch', () => {
@@ -326,6 +518,8 @@ void test('GPS updates remain separate from execution and use a distinct map fie
     observedAt: startedAt,
   };
   const view = deriveRouteMapView(copenhagenTrip, execution, userLocation);
+  const scheduleBefore = projectSchedule(copenhagenTrip, execution, startedAt);
+  const scheduleAfter = projectSchedule(copenhagenTrip, execution, startedAt);
   assert.equal(execution.currentStopId, copenhagenStopIds.nyhavn);
   assert.deepEqual(execution, before);
   assert.deepEqual(view.userLocation, userLocation);
@@ -341,6 +535,101 @@ void test('GPS updates remain separate from execution and use a distinct map fie
         stop.stopId !== copenhagenStopIds.amalienborg,
     ),
     false,
+  );
+  assert.equal(execution.eventLog.length, before.eventLog.length);
+  assert.equal(execution.currentStopId, before.currentStopId);
+  assert.equal(execution.executionDayId, before.executionDayId);
+  assert.deepEqual(scheduleAfter, scheduleBefore);
+  assert.equal(JSON.stringify(execution).includes('55.6841'), false);
+});
+
+void test('the hook owns one controller and immediately masks ineligible presentation', () => {
+  const hookSource = readFileSync(
+    new URL('../../hooks/use-foreground-location.ts', import.meta.url),
+    'utf8',
+  );
+
+  assert.equal(
+    hookSource.match(/new ForegroundLocationController\(/g)?.length,
+    1,
+  );
+  assert.match(
+    hookSource,
+    /controllerRef\.current\?\.setActive\(executionActive\)/,
+  );
+  assert.match(
+    hookSource,
+    /location: executionActive \? location : inactiveLocation/,
+  );
+  assert.match(hookSource, /controllerRef\.current\?\.retry\(\)/);
+});
+
+void test('Day and Full Map share fresh-only location presentation and one-shot camera control', () => {
+  const routeMapSource = readFileSync(
+    new URL('../../components/routerunner/route-map.tsx', import.meta.url),
+    'utf8',
+  );
+  const pageSource = readFileSync(
+    new URL('../../app/page.tsx', import.meta.url),
+    'utf8',
+  );
+  const css = readFileSync(
+    new URL('../../app/globals.css', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(routeMapSource, /currentLocation\.status !== 'available'/);
+  assert.match(routeMapSource, /userMarkerRef\.current\.setLngLat/);
+  assert.match(routeMapSource, /aria-label="Show my location"/);
+  assert.match(routeMapSource, /map\.easeTo\(/);
+  assert.equal(routeMapSource.match(/map\.easeTo\(/g)?.length, 1);
+  assert.match(routeMapSource, /Location outdated/);
+  assert.match(routeMapSource, /Retry location/);
+  assert.match(routeMapSource, /full && runtimeError/);
+  assert.match(css, /\.mapbox-user-marker[\s\S]*background: #2678b4/);
+  assert.match(css, /\.map-location-panel/);
+  assert.equal(pageSource.match(/<RouteMap/g)?.length, 2);
+  assert.equal(pageSource.match(/location=\{location\}/g)?.length, 2);
+  assert.equal(
+    pageSource.match(/onRetryLocation=\{retryLocation\}/g)?.length,
+    2,
+  );
+  assert.doesNotMatch(routeMapSource, /follow|heading-up|breadcrumb/i);
+  assert.doesNotMatch(routeMapSource, /FIELD-10B|instructional overlay/i);
+});
+
+void test('GPS stays outside planned bounds, Whole Trip Map and map derivation updates', () => {
+  const execution = activeState();
+  const userLocation = {
+    latitude: -33.8688,
+    longitude: 151.2093,
+    accuracy: 12,
+    observedAt: startedAt,
+  };
+  const withoutLocation = deriveRouteMapView(copenhagenTrip, execution);
+  const withLocation = deriveRouteMapView(
+    copenhagenTrip,
+    execution,
+    userLocation,
+  );
+  const pageSource = readFileSync(
+    new URL('../../app/page.tsx', import.meta.url),
+    'utf8',
+  );
+  const wholeTripSource = readFileSync(
+    new URL('../../components/routerunner/whole-trip-map.tsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.deepEqual(
+    withLocation.initialBoundsCoordinates,
+    withoutLocation.initialBoundsCoordinates,
+  );
+  assert.match(pageSource, /deriveWholeTripMapView\(trip, execution\)/);
+  assert.doesNotMatch(wholeTripSource, /ForegroundLocation|userLocation/);
+  assert.doesNotMatch(
+    pageSource,
+    /deriveRouteMapView\(trip, execution,\s*(?:coordinates|location)/,
   );
 });
 

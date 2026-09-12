@@ -6,10 +6,12 @@ import { nextEligiblePendingStopId } from '../execution/transitions.ts';
 import { resolveWaypointSafeInboundLeg } from '../navigation/waypoint-safe-inbound-leg.ts';
 import {
   isSightseeingStop,
+  stopMapMarkerRole,
   stopKind,
   stopMarkerLabel,
   stopSemanticLabel,
 } from '../trip/stop-semantics.ts';
+import type { MapMarkerRole } from '../trip/stop-semantics.ts';
 import type { ForegroundCoordinates } from '../location/foreground-location.ts';
 import type {
   LogisticsRole,
@@ -39,12 +41,28 @@ export interface RouteMapStopView {
   itineraryPosition: number;
   sightseeingPosition?: number;
   markerLabel: string;
+  markerRole: Exclude<MapMarkerRole, 'post-day'>;
   kind: StopKind;
   logisticsRole?: LogisticsRole;
   semanticLabel: string;
   priority: StopPriority;
   canSkip: boolean;
   status: RouteMapStopStatus;
+  plannedStartTime?: string;
+}
+
+export interface RouteMapCoordinate {
+  readonly longitude: number;
+  readonly latitude: number;
+}
+
+export interface RouteMapMarkerDetailView {
+  readonly stopId: StopId;
+  readonly name: string;
+  readonly markerLabel: string;
+  readonly semanticLabel: string;
+  readonly status: RouteMapStopStatus;
+  readonly plannedStartTime?: string;
 }
 
 export interface RouteMapLegView {
@@ -65,11 +83,74 @@ export interface RouteMapView {
   stops: RouteMapStopView[];
   legs: RouteMapLegView[];
   navigationViaPoints: readonly RouteMapNavigationViaPointView[];
+  /** Sightseeing-focused initial camera points; all markers remain rendered. */
+  initialBoundsCoordinates: readonly RouteMapCoordinate[];
   userLocation?: ForegroundCoordinates;
   routePresentation:
     | 'prepared-geometry'
     | 'schematic-endpoints'
     | 'unavailable';
+}
+
+function distanceMeters(
+  from: RouteMapCoordinate,
+  to: RouteMapCoordinate,
+): number {
+  const radians = Math.PI / 180;
+  const latitudeDelta = (to.latitude - from.latitude) * radians;
+  const longitudeDelta = (to.longitude - from.longitude) * radians;
+  const fromLatitude = from.latitude * radians;
+  const toLatitude = to.latitude * radians;
+  const a =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(fromLatitude) *
+      Math.cos(toLatitude) *
+      Math.sin(longitudeDelta / 2) ** 2;
+  return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Keeps nearby logistics/route geometry while excluding points whose distance
+ * would collapse the useful sightseeing scale. Excluded points stay rendered.
+ */
+export function sightseeingFocusedMapBounds(
+  sightseeing: readonly RouteMapCoordinate[],
+  candidates: readonly RouteMapCoordinate[],
+): readonly RouteMapCoordinate[] {
+  if (sightseeing.length === 0) return candidates;
+  const centre = sightseeing.reduce(
+    (result, point) => ({
+      latitude: result.latitude + point.latitude / sightseeing.length,
+      longitude: result.longitude + point.longitude / sightseeing.length,
+    }),
+    { latitude: 0, longitude: 0 },
+  );
+  const sightseeingRadius = Math.max(
+    ...sightseeing.map((point) => distanceMeters(centre, point)),
+  );
+  const inclusionRadius = Math.max(5_000, sightseeingRadius * 1.75);
+  return candidates.filter(
+    (point) => distanceMeters(centre, point) <= inclusionRadius,
+  );
+}
+
+/** Pure selected-marker content; selection is never part of execution state. */
+export function deriveRouteMapMarkerDetail(
+  view: Pick<RouteMapView, 'stops'>,
+  stopId: StopId | undefined,
+): RouteMapMarkerDetailView | undefined {
+  const stop = view.stops.find((candidate) => candidate.stopId === stopId);
+  if (!stop) return undefined;
+  return {
+    stopId: stop.stopId,
+    name: stop.name,
+    markerLabel: stop.markerLabel,
+    semanticLabel: stop.semanticLabel,
+    status: stop.status,
+    ...(stop.plannedStartTime === undefined
+      ? {}
+      : { plannedStartTime: stop.plannedStartTime }),
+  };
 }
 
 export function mapboxTokenState(
@@ -115,6 +196,7 @@ function deriveDayRouteMapView(
       stops: [],
       legs: [],
       navigationViaPoints: [],
+      initialBoundsCoordinates: [],
       userLocation,
       routePresentation: 'unavailable',
     };
@@ -145,12 +227,16 @@ function deriveDayRouteMapView(
     ...executionOverrideStopIds,
   ].map((stopId, index) => {
     const stop = stopById.get(stopId);
+    const planItem = orderedPlan.find((item) => item.stopId === stopId);
     const position =
       stop && isSightseeingStop(stop) ? ++sightseeingPosition : undefined;
     return {
       stopId,
       itineraryPosition: index + 1,
       ...(position === undefined ? {} : { sightseeingPosition: position }),
+      ...(planItem?.plannedStartTime === undefined
+        ? {}
+        : { plannedStartTime: planItem.plannedStartTime }),
     };
   });
   const stops = presentedStops.flatMap<RouteMapStopView>((item) => {
@@ -185,6 +271,7 @@ function deriveDayRouteMapView(
           ? {}
           : { sightseeingPosition: item.sightseeingPosition }),
         markerLabel: stopMarkerLabel(stop, item.sightseeingPosition),
+        markerRole: stopMapMarkerRole(stop),
         kind: stopKind(stop),
         ...(stop.logisticsRole === undefined
           ? {}
@@ -193,6 +280,9 @@ function deriveDayRouteMapView(
         priority: stop.priority,
         canSkip: stop.canSkip,
         status,
+        ...(item.plannedStartTime === undefined
+          ? {}
+          : { plannedStartTime: item.plannedStartTime }),
       },
     ];
   });
@@ -234,11 +324,27 @@ function deriveDayRouteMapView(
     ];
   });
   const representations = new Set(legs.map((leg) => leg.representation));
+  const sightseeingCoordinates = stops
+    .filter((stop) => stop.markerRole === 'sightseeing')
+    .map(({ longitude, latitude }) => ({ longitude, latitude }));
+  const candidateBoundsCoordinates = [
+    ...stops.map(({ longitude, latitude }) => ({ longitude, latitude })),
+    ...legs.flatMap((leg) =>
+      leg.coordinates.map(([longitude, latitude]) => ({
+        longitude,
+        latitude,
+      })),
+    ),
+  ];
 
   return {
     stops,
     legs,
     navigationViaPoints,
+    initialBoundsCoordinates: sightseeingFocusedMapBounds(
+      sightseeingCoordinates,
+      candidateBoundsCoordinates,
+    ),
     userLocation,
     routePresentation: representations.has('schematic-endpoints')
       ? 'schematic-endpoints'

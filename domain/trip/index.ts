@@ -10,11 +10,13 @@ export {
   isSightseeingStop,
   logisticsRoleLabel,
   logisticsRoleMarkerLabel,
+  stopMapMarkerRole,
   stopActivityLabel,
   stopKind,
   stopMarkerLabel,
   stopSemanticLabel,
 } from './stop-semantics.ts';
+export type { MapMarkerRole } from './stop-semantics.ts';
 export {
   MAX_NAVIGATION_WAYPOINTS,
   MAX_STOP_HIGHLIGHTS,

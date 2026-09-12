@@ -19,6 +19,7 @@ import {
   completeCurrentStop,
   createInitialTripExecutionState,
   currentGoogleMapsNavigationUrl,
+  deriveRouteMapMarkerDetail,
   deriveRouteMapView,
   deriveStopActionModel,
   EXECUTION_STATE_SCHEMA_VERSION,
@@ -163,6 +164,109 @@ void test('Rome Day 1 keeps canonical order while logistics markers bracket sigh
   );
   assert.equal(map.stops[0].sightseeingPosition, undefined);
   assert.equal(map.stops.at(-1)?.sightseeingPosition, undefined);
+  assert.deepEqual(
+    [
+      map.stops[0].markerRole,
+      map.stops[1].markerRole,
+      map.stops.at(-1)?.markerRole,
+    ],
+    ['logistics-start', 'sightseeing', 'logistics-end'],
+  );
+  assert.equal(map.stops[0].plannedStartTime, '09:40');
+});
+
+void test('day-map markers keep compact identity and reveal read-only selected details', () => {
+  const state = startedRome();
+  const stateBefore = structuredClone(state);
+  const tripBefore = structuredClone(romeTrip);
+  const view = deriveRouteMapView(romeTrip, state);
+  const spanishSteps = view.stops.find(
+    ({ stopId }) => stopId === romeStopIds.spanishSteps,
+  );
+  assert.ok(spanishSteps);
+  assert.equal(spanishSteps.markerLabel, '1');
+  assert.equal(spanishSteps.markerLabel.includes(spanishSteps.name), false);
+
+  const selected = deriveRouteMapMarkerDetail(view, spanishSteps.stopId);
+  assert.equal(selected?.name, spanishSteps.name);
+  assert.equal(selected?.markerLabel, '1');
+  assert.equal(selected?.semanticLabel, spanishSteps.semanticLabel);
+  assert.deepEqual(state, stateBefore);
+  assert.deepEqual(romeTrip, tripBefore);
+  assert.deepEqual(state.eventLog, stateBefore.eventLog);
+});
+
+void test('START and END use compact color-independent logistics contracts', () => {
+  const view = deriveRouteMapView(romeTrip, startedRome());
+  const start = view.stops[0];
+  const sight = view.stops[1];
+  const end = view.stops.at(-1)!;
+
+  assert.deepEqual(
+    [start.markerLabel, start.markerRole, start.sightseeingPosition],
+    ['START', 'logistics-start', undefined],
+  );
+  assert.deepEqual(
+    [end.markerLabel, end.markerRole, end.sightseeingPosition],
+    ['END', 'logistics-end', undefined],
+  );
+  assert.notEqual(start.markerRole, sight.markerRole);
+  assert.notEqual(end.markerRole, sight.markerRole);
+  assert.notEqual(start.markerRole, end.markerRole);
+  assert.notEqual(start.markerLabel, end.markerLabel);
+});
+
+void test('day-map initial bounds exclude distant START but retain it as a marker and keep nearby END', () => {
+  const view = deriveRouteMapView(
+    romeTrip,
+    createInitialTripExecutionState(romeTrip, initializedAt),
+  );
+  const includes = (latitude: number, longitude: number) =>
+    view.initialBoundsCoordinates.some(
+      (point) => point.latitude === latitude && point.longitude === longitude,
+    );
+
+  assert.equal(includes(41.7999, 12.5949), false);
+  assert.equal(includes(41.891373, 12.518824), true);
+  assert.equal(
+    view.stops.some(({ stopId }) => stopId === romeStopIds.ciampinoAirport),
+    true,
+  );
+  assert.equal(
+    view.stops.some(({ stopId }) => stopId === romeStopIds.laCasaDiElena),
+    true,
+  );
+});
+
+void test('map UI removes permanent names, keeps transient selection, and omits the full-map overlay', () => {
+  const routeMapSource = readFileSync(
+    new URL('../../components/routerunner/route-map.tsx', import.meta.url),
+    'utf8',
+  );
+  const css = readFileSync(
+    new URL('../../app/globals.css', import.meta.url),
+    'utf8',
+  );
+  const pageSource = readFileSync(
+    new URL('../../app/page.tsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(routeMapSource, /markerButton\.textContent = stop\.markerLabel/);
+  assert.doesNotMatch(routeMapSource, /dataset\.label|attr\(data-label\)/);
+  assert.doesNotMatch(css, /\.mapbox-stop-marker::after/);
+  assert.match(routeMapSource, /setSelectedStopId\(stop\.stopId\)/);
+  assert.match(routeMapSource, /<strong>\{selectedStop\.name\}<\/strong>/);
+  assert.doesNotMatch(
+    routeMapSource,
+    /onStopRef|setDetail|setExecution|persist/,
+  );
+  assert.match(routeMapSource, /\{!full && !selectedStop && \(/);
+  assert.match(pageSource, /displayedStop\.logisticsRole === 'start'/);
+  assert.doesNotMatch(pageSource, /Start Day begins at this start point/);
+  assert.match(css, /\.stop-number\.logistics-start/);
+  assert.match(css, /\.stop-number\.logistics-end/);
+  assert.match(pageSource, /!isSightseeingStop\(stop\) \? \(\s*markerLabel/);
 });
 
 void test('day summaries count sights separately and preserve all-sightseeing fixtures', () => {

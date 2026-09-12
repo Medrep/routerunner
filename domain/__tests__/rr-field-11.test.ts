@@ -129,18 +129,11 @@ void test('Rome logistics and post-day markers never consume sightseeing numbers
       accommodation.markerRole,
       accommodation.sightseeingPosition,
     ],
-    [
-      'D1 START',
-      'logistics-start',
-      undefined,
-      'D1 END',
-      'logistics-end',
-      undefined,
-    ],
+    ['START', 'logistics-start', undefined, 'END', 'logistics-end', undefined],
   );
   assert.ok(fco);
   assert.equal(fco.destinationId, romeFiumicinoAirport.id);
-  assert.equal(fco.markerLabel, 'D2 AFTER');
+  assert.equal(fco.markerLabel, 'AFTER');
   assert.equal(fco.markerRole, 'post-day');
   assert.equal('stopId' in fco, false);
   assert.equal('sightseeingPosition' in fco, false);

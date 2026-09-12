@@ -98,6 +98,7 @@ import {
   switchExecutionDay,
   shouldRefreshScheduleProjection,
   stopActivityLabel,
+  stopMapMarkerRole,
   stopSemanticLabel,
   tripExecutionLifecycle,
   waitingDoNowActionModels,
@@ -1007,11 +1008,7 @@ function ExecutionPage() {
           <div className="workspace">
             <div className="map-column">
               <section className="map-panel">
-                <RouteMap
-                  view={mapView}
-                  location={location}
-                  onStop={setDetail}
-                />
+                <RouteMap view={mapView} location={location} />
                 <button className="map-expand" onClick={() => setFull(true)}>
                   <Expand size={17} />
                   Full map
@@ -1200,18 +1197,31 @@ function ExecutionPage() {
                       className="now stop-open"
                       onClick={() => setDetail(displayedStop.id)}
                     >
-                      <span className="big-number">
-                        {displayedPlanItem?.markerLabel ?? '—'}
-                      </span>
+                      {!(
+                        !started && displayedStop.logisticsRole === 'start'
+                      ) && (
+                        <span className="big-number">
+                          {displayedPlanItem?.markerLabel ?? '—'}
+                        </span>
+                      )}
                       <div>
                         <h2>{displayedStop.name}</h2>
                         <p>
-                          {started
-                            ? stopActivityLabel(displayedStop)
-                            : 'Your day begins here'}{' '}
-                          · ~{displayedStop.plannedVisitMinutes} min
+                          {stopActivityLabel(displayedStop)}
+                          {!started && displayedPlanItem?.plannedStartTime && (
+                            <>
+                              {' · Planned '}
+                              <time
+                                dateTime={displayedPlanItem.plannedStartTime}
+                              >
+                                {displayedPlanItem.plannedStartTime}
+                              </time>
+                            </>
+                          )}
+                          {' · ~'}
+                          {displayedStop.plannedVisitMinutes} min
                         </p>
-                        {displayedPlanItem?.plannedStartTime && (
+                        {started && displayedPlanItem?.plannedStartTime && (
                           <p className="planned-start-time">
                             Planned{' '}
                             <time dateTime={displayedPlanItem.plannedStartTime}>
@@ -1233,12 +1243,13 @@ function ExecutionPage() {
                         <ChevronRight size={17} aria-hidden="true" />
                       </button>
                     )}
-                    {!started && (
-                      <p className="start-intro">
-                        Follow the prepared stops in order, with room to pause
-                        along the way.
-                      </p>
-                    )}
+                    {!started &&
+                      firstPreparedStop?.logisticsRole !== 'start' && (
+                        <p className="start-intro">
+                          Follow the prepared stops in order, with room to pause
+                          along the way.
+                        </p>
+                      )}
                     {nextStop && (
                       <button
                         className="next-step stop-open"
@@ -1312,13 +1323,14 @@ function ExecutionPage() {
                           : 'Start day'}
                       </button>
                     </div>
-                    <p className="action-context">
-                      {started
-                        ? `${currentActionModel?.completionLabel ?? 'Done'} completes ${displayedStop.name}.`
-                        : firstPreparedStop?.logisticsRole === 'start'
-                          ? 'Start Day begins at this start point.'
+                    {(started ||
+                      firstPreparedStop?.logisticsRole !== 'start') && (
+                      <p className="action-context">
+                        {started
+                          ? `${currentActionModel?.completionLabel ?? 'Done'} completes ${displayedStop.name}.`
                           : 'Start Day stays in RouteRunner. Start & navigate also opens Google Maps.'}
-                    </p>
+                      </p>
+                    )}
                     {started && (
                       <button
                         type="button"
@@ -1560,9 +1572,11 @@ function ExecutionPage() {
                             aria-label={`${stop.name}, ${status}, ${stopSemanticLabel(stop)}`}
                           >
                             <span
-                              className={`stop-number ${stop.priority === 'optional' ? 'optional-number' : ''}`}
+                              className={`stop-number ${stopMapMarkerRole(stop)} ${stop.priority === 'optional' ? 'optional-number' : ''}`}
                             >
-                              {status === 'completed' ? (
+                              {!isSightseeingStop(stop) ? (
+                                markerLabel
+                              ) : status === 'completed' ? (
                                 <Check size={17} />
                               ) : status === 'skipped' ? (
                                 '−'
@@ -1697,12 +1711,7 @@ function ExecutionPage() {
             execution state.
           </DialogDescription>
           <div className="full-map-body">
-            <RouteMap
-              view={mapView}
-              location={location}
-              onStop={setDetail}
-              full
-            />
+            <RouteMap view={mapView} location={location} full />
           </div>
           <DialogClose className="full-map-back">
             <ArrowLeft size={20} />

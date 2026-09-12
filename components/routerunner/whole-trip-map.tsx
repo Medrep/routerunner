@@ -230,10 +230,11 @@ export default function WholeTripMap({ view }: { view: WholeTripMapView }) {
         </div>
       </div>
       {selectedMarker && (
-        <aside className="whole-trip-map-detail" aria-live="polite">
+        <aside className="map-marker-detail" aria-live="polite">
           <div>
             <span style={{ color: selectedMarker.dayStyle.color }}>
-              {selectedMarker.markerLabel} · {selectedMarker.semanticLabel}
+              {selectedMarker.dayLabel} · {selectedMarker.markerLabel} ·{' '}
+              {selectedMarker.semanticLabel}
             </span>
             <strong>{selectedMarker.name}</strong>
             {selectedMarker.kind === 'stop' &&

@@ -1,9 +1,15 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import type { Map as MapboxMap, Marker } from 'mapbox-gl';
-import type { ForegroundLocationState, RouteMapView, StopId } from '@/domain';
-import { mapboxTokenState } from '@/domain';
+import type {
+  ForegroundLocationState,
+  RouteMapCoordinate,
+  RouteMapView,
+  StopId,
+} from '@/domain';
+import { deriveRouteMapMarkerDetail, mapboxTokenState } from '@/domain';
 
 function removeMarkers<Key>(markers: Map<Key, Marker>): void {
   for (const marker of markers.values()) marker.remove();
@@ -29,15 +35,36 @@ function locationCaption(location: ForegroundLocationState): string {
   }
 }
 
+function fitCoordinates(
+  mapbox: typeof import('mapbox-gl'),
+  map: MapboxMap,
+  coordinates: readonly RouteMapCoordinate[],
+  full: boolean,
+): void {
+  if (coordinates.length === 0) return;
+  if (coordinates.length === 1) {
+    const point = coordinates[0];
+    map.jumpTo({ center: [point.longitude, point.latitude], zoom: 13 });
+    return;
+  }
+  const bounds = new mapbox.default.LngLatBounds();
+  for (const point of coordinates) {
+    bounds.extend([point.longitude, point.latitude]);
+  }
+  map.fitBounds(bounds, {
+    padding: full ? 80 : 48,
+    duration: 0,
+    maxZoom: 14,
+  });
+}
+
 export default function RouteMap({
   view,
   location,
-  onStop,
   full = false,
 }: {
   view: RouteMapView;
   location: ForegroundLocationState;
-  onStop: (stopId: StopId) => void;
   full?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -47,9 +74,11 @@ export default function RouteMap({
   const viaMarkersRef = useRef(new Map<number, Marker>());
   const userMarkerRef = useRef<Marker | null>(null);
   const viewRef = useRef(view);
-  const onStopRef = useRef(onStop);
+  const fittedCoordinatesKeyRef = useRef<string | undefined>(undefined);
+  const [selectedStopId, setSelectedStopId] = useState<StopId>();
   const [runtimeError, setRuntimeError] = useState<string>();
   const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+  const selectedStop = deriveRouteMapMarkerDetail(view, selectedStopId);
 
   function updateOverlays(map: MapboxMap): void {
     const mapbox = moduleRef.current;
@@ -80,8 +109,7 @@ export default function RouteMap({
     for (const stop of viewRef.current.stops) {
       const markerButton = document.createElement('button');
       markerButton.type = 'button';
-      markerButton.className = `mapbox-stop-marker ${stop.status} ${stop.kind} ${stop.kind === 'sightseeing' ? stop.priority : ''}`;
-      markerButton.dataset.label = stop.name;
+      markerButton.className = `mapbox-stop-marker ${stop.status} ${stop.markerRole} ${stop.kind === 'sightseeing' ? stop.priority : ''}`;
       markerButton.textContent = stop.markerLabel;
       markerButton.setAttribute(
         'aria-label',
@@ -89,7 +117,7 @@ export default function RouteMap({
       );
       markerButton.title = stop.name;
       markerButton.addEventListener('click', () =>
-        onStopRef.current(stop.stopId),
+        setSelectedStopId(stop.stopId),
       );
       const marker = new mapbox.default.Marker({
         element: markerButton,
@@ -141,14 +169,14 @@ export default function RouteMap({
         if (cancelled || !containerRef.current) return;
         moduleRef.current = mapbox;
         mapbox.default.accessToken = token!;
-        const firstStop = viewRef.current.stops[0];
+        const firstPoint = viewRef.current.initialBoundsCoordinates[0];
         const map = new mapbox.default.Map({
           container: containerRef.current,
           style: 'mapbox://styles/mapbox/streets-v12',
-          center: firstStop
-            ? [firstStop.longitude, firstStop.latitude]
+          center: firstPoint
+            ? [firstPoint.longitude, firstPoint.latitude]
             : [0, 0],
-          zoom: firstStop ? 12.7 : 1,
+          zoom: firstPoint ? 12.7 : 1,
           attributionControl: true,
         });
         mapRef.current = map;
@@ -161,13 +189,15 @@ export default function RouteMap({
         map.on('load', () => {
           map.resize();
           updateOverlays(map);
-          if (viewRef.current.stops.length > 1) {
-            const bounds = new mapbox.default.LngLatBounds();
-            for (const stop of viewRef.current.stops) {
-              bounds.extend([stop.longitude, stop.latitude]);
-            }
-            map.fitBounds(bounds, { padding: full ? 80 : 48, duration: 0 });
-          }
+          fitCoordinates(
+            mapbox,
+            map,
+            viewRef.current.initialBoundsCoordinates,
+            full,
+          );
+          fittedCoordinatesKeyRef.current = JSON.stringify(
+            viewRef.current.initialBoundsCoordinates,
+          );
         });
         map.on('error', () => {
           setRuntimeError('Map tiles are temporarily unavailable.');
@@ -191,10 +221,25 @@ export default function RouteMap({
 
   useEffect(() => {
     viewRef.current = view;
-    onStopRef.current = onStop;
     const map = mapRef.current;
-    if (map) updateOverlays(map);
-  }, [onStop, view]);
+    if (map) {
+      updateOverlays(map);
+      const coordinatesKey = JSON.stringify(view.initialBoundsCoordinates);
+      if (
+        moduleRef.current &&
+        map.isStyleLoaded() &&
+        fittedCoordinatesKeyRef.current !== coordinatesKey
+      ) {
+        fitCoordinates(
+          moduleRef.current,
+          map,
+          view.initialBoundsCoordinates,
+          full,
+        );
+        fittedCoordinatesKeyRef.current = coordinatesKey;
+      }
+    }
+  }, [full, view]);
 
   if (mapboxTokenState(token) === 'missing') {
     return (
@@ -222,11 +267,47 @@ export default function RouteMap({
         </span>
         <span className="north">↑ N</span>
       </div>
-      <output className="map-caption">
-        <span>{locationCaption(location)}</span>
-        <span>Itinerary stop overview · not turn-by-turn routing</span>
-        {runtimeError && <span>{runtimeError}</span>}
-      </output>
+      {!full && !selectedStop && (
+        <output className="map-caption">
+          <span>{locationCaption(location)}</span>
+          <span>Itinerary stop overview · not turn-by-turn routing</span>
+          {runtimeError && <span>{runtimeError}</span>}
+        </output>
+      )}
+      {selectedStop && (
+        <aside
+          className="map-marker-detail route-map-detail"
+          aria-live="polite"
+        >
+          <div>
+            <span>
+              {selectedStop.markerLabel} · {selectedStop.semanticLabel}
+            </span>
+            <strong>{selectedStop.name}</strong>
+            {(selectedStop.plannedStartTime ||
+              selectedStop.status !== 'future') && (
+              <small>
+                {selectedStop.plannedStartTime && (
+                  <>Planned {selectedStop.plannedStartTime}</>
+                )}
+                {selectedStop.plannedStartTime &&
+                  selectedStop.status !== 'future' && <> · </>}
+                {selectedStop.status !== 'future' && selectedStop.status}
+              </small>
+            )}
+          </div>
+          <button
+            type="button"
+            aria-label="Close map stop information"
+            onClick={() => setSelectedStopId(undefined)}
+          >
+            <X size={18} />
+          </button>
+        </aside>
+      )}
+      {full && runtimeError && (
+        <p className="whole-trip-map-error">{runtimeError}</p>
+      )}
     </div>
   );
 }

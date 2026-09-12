@@ -151,6 +151,11 @@ body {
   --border: #dce1da;
   --input: #c6cec7;
   --ring: #176b50;
+  --map-sightseeing: #176b50;
+  --map-logistics-start: #276683;
+  --map-logistics-end: #824c3f;
+  --map-logistics-transfer: #566761;
+  --map-post-day: #76547d;
   --radius: 0.8rem;
   --font-sans: Arial, Helvetica, sans-serif;
 }
@@ -710,7 +715,7 @@ body {
   display: grid;
   place-items: center;
   padding: 0;
-  border: 2px solid #6f8879;
+  border: 2px solid var(--map-sightseeing);
   border-radius: 50%;
   color: #274c3b;
   background: #fff;
@@ -718,25 +723,6 @@ body {
   font-size: 13px;
   font-weight: 750;
   line-height: 1;
-}
-.mapbox-stop-marker::after {
-  content: attr(data-label);
-  position: absolute;
-  left: calc(100% + 7px);
-  top: 50%;
-  width: max-content;
-  max-width: 130px;
-  transform: translateY(-50%);
-  color: #203b30;
-  text-shadow:
-    -2px -2px 0 #f3f6f2,
-    2px -2px 0 #f3f6f2,
-    -2px 2px 0 #f3f6f2,
-    2px 2px 0 #f3f6f2;
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.15;
-  pointer-events: none;
 }
 .mapbox-stop-marker.current {
   width: 40px;
@@ -772,18 +758,49 @@ body {
 .mapbox-stop-marker.optional {
   border-radius: 7px;
 }
-.mapbox-stop-marker.logistics {
+.mapbox-stop-marker.logistics-start,
+.mapbox-stop-marker.logistics-end,
+.mapbox-stop-marker.logistics-transfer {
   width: auto;
-  min-width: 48px;
-  padding: 0 7px;
-  border-radius: 9px;
+  min-width: 42px;
+  height: 28px;
+  padding: 0 6px;
+  color: #fff;
   font-size: 10px;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.045em;
 }
-.mapbox-stop-marker.logistics.current {
+.mapbox-stop-marker.logistics-start {
+  --marker-role-color: var(--map-logistics-start);
+  border-color: var(--map-logistics-start);
+  border-radius: 5px 999px 999px 5px;
+  background: var(--map-logistics-start);
+}
+.mapbox-stop-marker.logistics-end {
+  --marker-role-color: var(--map-logistics-end);
+  border: 4px double #fff;
+  border-radius: 999px 5px 5px 999px;
+  background: var(--map-logistics-end);
+  box-shadow:
+    0 0 0 2px var(--map-logistics-end),
+    0 2px 8px #18362b33;
+}
+.mapbox-stop-marker.logistics-transfer {
+  --marker-role-color: var(--map-logistics-transfer);
+  border-color: var(--map-logistics-transfer);
+  border-style: dashed;
+  border-radius: 6px;
+  background: var(--map-logistics-transfer);
+}
+.mapbox-stop-marker.logistics-start.current,
+.mapbox-stop-marker.logistics-end.current,
+.mapbox-stop-marker.logistics-transfer.current {
   width: auto;
-  min-width: 56px;
-  font-size: 11px;
+  min-width: 42px;
+  height: 28px;
+  box-shadow:
+    0 0 0 5px #ffffffc9,
+    0 0 0 8px var(--marker-role-color),
+    0 3px 10px #18362b44;
 }
 .mapbox-via-marker {
   position: absolute;
@@ -885,18 +902,50 @@ body {
 .whole-trip-stop-marker.logistics-start,
 .whole-trip-stop-marker.logistics-end,
 .whole-trip-stop-marker.logistics-transfer {
-  border-color: var(--day-color);
-  color: var(--day-color);
-  background: #fff;
+  min-width: 42px;
+  height: 28px;
+  padding: 0 6px;
+  border-color: #fff;
+  color: #fff;
+  font-size: 10px;
+  letter-spacing: 0.045em;
+  box-shadow:
+    0 0 0 2px var(--day-color),
+    0 3px 9px #18362b42;
+}
+.whole-trip-stop-marker.logistics-start {
+  border-radius: 5px 999px 999px 5px;
+  background: var(--map-logistics-start);
+}
+.whole-trip-stop-marker.logistics-end {
+  border-width: 4px;
+  border-style: double;
+  border-radius: 999px 5px 5px 999px;
+  background: var(--map-logistics-end);
+}
+.whole-trip-stop-marker.logistics-transfer {
+  border-style: dashed;
+  border-radius: 6px;
+  background: var(--map-logistics-transfer);
+}
+.whole-trip-stop-marker.logistics-start.current,
+.whole-trip-stop-marker.logistics-end.current,
+.whole-trip-stop-marker.logistics-transfer.current {
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 0 6px var(--day-color),
+    0 4px 12px #18362b4d;
 }
 .whole-trip-stop-marker.post-day {
-  height: 34px;
-  border-color: var(--day-color);
-  border-radius: 7px;
-  color: var(--day-color);
-  background: #fff;
+  min-width: 43px;
+  height: 29px;
+  border-color: #fff;
+  border-style: dashed;
+  border-radius: 4px;
+  color: #fff;
+  background: var(--map-post-day);
   box-shadow:
-    0 0 0 2px #ffffffb8,
+    0 0 0 2px var(--day-color),
     0 3px 9px #18362b42;
 }
 .whole-trip-map-toolbar {
@@ -959,7 +1008,7 @@ body {
   color: #607067;
   font-size: 11px;
 }
-.whole-trip-map-detail {
+.map-marker-detail {
   position: absolute;
   z-index: 4;
   bottom: max(20px, env(safe-area-inset-bottom));
@@ -978,28 +1027,28 @@ body {
   box-shadow: 0 5px 22px #18362b38;
   backdrop-filter: blur(8px);
 }
-.whole-trip-map-detail span,
-.whole-trip-map-detail strong,
-.whole-trip-map-detail small {
+.map-marker-detail span,
+.map-marker-detail strong,
+.map-marker-detail small {
   display: block;
 }
-.whole-trip-map-detail span {
+.map-marker-detail span {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.whole-trip-map-detail strong {
+.map-marker-detail strong {
   margin-top: 4px;
   font-size: 16px;
 }
-.whole-trip-map-detail small {
+.map-marker-detail small {
   margin-top: 4px;
   color: #607067;
   font-size: 12px;
   text-transform: capitalize;
 }
-.whole-trip-map-detail > button {
+.map-marker-detail > button {
   width: 36px;
   height: 36px;
   display: grid;
@@ -1008,6 +1057,9 @@ body {
   border-radius: 50%;
   color: #365448;
   background: #edf2ee;
+}
+.route-map-detail {
+  bottom: 34px;
 }
 .whole-trip-map-error {
   position: absolute;
@@ -1634,6 +1686,34 @@ body {
   border-color: #b98b36;
   color: #795614;
   background: #fff4d8;
+}
+.stop-number.logistics-start,
+.stop-number.logistics-end,
+.stop-number.logistics-transfer {
+  width: auto;
+  min-width: 42px;
+  height: 27px;
+  padding: 0 6px;
+  color: #fff;
+  font-size: 10px;
+  letter-spacing: 0.045em;
+}
+.stop-number.logistics-start {
+  border-color: var(--map-logistics-start);
+  border-radius: 5px 999px 999px 5px;
+  background: var(--map-logistics-start);
+}
+.stop-number.logistics-end {
+  border: 4px double #fff;
+  border-radius: 999px 5px 5px 999px;
+  background: var(--map-logistics-end);
+  box-shadow: 0 0 0 1px var(--map-logistics-end);
+}
+.stop-number.logistics-transfer {
+  border-color: var(--map-logistics-transfer);
+  border-style: dashed;
+  border-radius: 6px;
+  background: var(--map-logistics-transfer);
 }
 .do-now-queue,
 .for-later {
@@ -2404,7 +2484,7 @@ footer small {
     max-height: 38dvh;
     overflow: auto;
   }
-  .whole-trip-map-detail {
+  .map-marker-detail {
     bottom: calc(max(16px, env(safe-area-inset-bottom)) + 42px);
   }
   .stop-sheet[data-slot] {

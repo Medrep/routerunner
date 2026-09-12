@@ -1,5 +1,12 @@
 import type { LogisticsRole, Stop, StopKind } from './types.ts';
 
+export type MapMarkerRole =
+  | 'sightseeing'
+  | 'logistics-start'
+  | 'logistics-end'
+  | 'logistics-transfer'
+  | 'post-day';
+
 /** Resolves the backward-compatible default for existing Stop fixtures. */
 export function stopKind(stop: Pick<Stop, 'kind'>): StopKind {
   return stop.kind ?? 'sightseeing';
@@ -28,6 +35,16 @@ export function logisticsRoleLabel(role: LogisticsRole): string {
 /** Short marker language that does not consume a sightseeing number. */
 export function logisticsRoleMarkerLabel(role: LogisticsRole): string {
   return role === 'start' ? 'START' : role === 'accommodation' ? 'END' : 'VIA';
+}
+
+/** Semantic map role used for color-independent marker shape and text. */
+export function stopMapMarkerRole(
+  stop: Pick<Stop, 'kind' | 'logisticsRole'>,
+): Exclude<MapMarkerRole, 'post-day'> {
+  if (isSightseeingStop(stop)) return 'sightseeing';
+  if (stop.logisticsRole === 'start') return 'logistics-start';
+  if (stop.logisticsRole === 'accommodation') return 'logistics-end';
+  return 'logistics-transfer';
 }
 
 /** User-facing semantic label; logistics never leaks compatibility priority. */

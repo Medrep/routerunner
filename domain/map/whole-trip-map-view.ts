@@ -1,8 +1,12 @@
 import { orderedDayPlan } from '../execution/execution-order.ts';
 import {
   isSightseeingStop,
+  logisticsRoleMarkerLabel,
+  stopMapMarkerRole,
   stopSemanticLabel,
 } from '../trip/stop-semantics.ts';
+import type { MapMarkerRole } from '../trip/stop-semantics.ts';
+import { sightseeingFocusedMapBounds } from './route-map-view.ts';
 import type {
   LogisticsRole,
   PostDayDestinationId,
@@ -20,12 +24,7 @@ export type WholeTripStopStatus =
   | 'saved'
   | 'planned';
 
-export type WholeTripMarkerRole =
-  | 'sightseeing'
-  | 'logistics-start'
-  | 'logistics-end'
-  | 'logistics-transfer'
-  | 'post-day';
+export type WholeTripMarkerRole = MapMarkerRole;
 
 export interface WholeTripDayStyle {
   readonly key: string;
@@ -156,65 +155,6 @@ function stopStatus(
   return 'planned';
 }
 
-function markerRole(
-  logisticsRole: LogisticsRole | undefined,
-): WholeTripMarkerRole {
-  if (logisticsRole === 'start') return 'logistics-start';
-  if (logisticsRole === 'accommodation') return 'logistics-end';
-  return 'logistics-transfer';
-}
-
-function logisticsMarkerLabel(
-  dayNumber: number,
-  logisticsRole: LogisticsRole | undefined,
-): string {
-  if (logisticsRole === 'start') return `D${dayNumber} START`;
-  if (logisticsRole === 'accommodation') return `D${dayNumber} END`;
-  return `D${dayNumber} VIA`;
-}
-
-function distanceMeters(
-  from: WholeTripMapCoordinate,
-  to: WholeTripMapCoordinate,
-): number {
-  const radians = Math.PI / 180;
-  const latitudeDelta = (to.latitude - from.latitude) * radians;
-  const longitudeDelta = (to.longitude - from.longitude) * radians;
-  const fromLatitude = from.latitude * radians;
-  const toLatitude = to.latitude * radians;
-  const a =
-    Math.sin(latitudeDelta / 2) ** 2 +
-    Math.cos(fromLatitude) *
-      Math.cos(toLatitude) *
-      Math.sin(longitudeDelta / 2) ** 2;
-  return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-/**
- * Keeps the first camera useful when transport endpoints sit far outside the
- * sightseeing area. Outliers remain rendered and available via All points.
- */
-function sightseeingFocusedBounds(
-  sightseeing: readonly WholeTripMapCoordinate[],
-  candidates: readonly WholeTripMapCoordinate[],
-): readonly WholeTripMapCoordinate[] {
-  if (sightseeing.length === 0) return candidates;
-  const centre = sightseeing.reduce(
-    (result, point) => ({
-      latitude: result.latitude + point.latitude / sightseeing.length,
-      longitude: result.longitude + point.longitude / sightseeing.length,
-    }),
-    { latitude: 0, longitude: 0 },
-  );
-  const sightseeingRadius = Math.max(
-    ...sightseeing.map((point) => distanceMeters(centre, point)),
-  );
-  const inclusionRadius = Math.max(5_000, sightseeingRadius * 1.75);
-  return candidates.filter(
-    (point) => distanceMeters(centre, point) <= inclusionRadius,
-  );
-}
-
 /**
  * Pure, transient presentation over immutable planning data and optional
  * execution decoration. No numbering, style, or open-state data is persisted.
@@ -258,10 +198,10 @@ export function deriveWholeTripMapView(
           : { sightseeingPosition: localPosition }),
         markerLabel: sightseeing
           ? `D${dayNumber}-${localPosition}`
-          : logisticsMarkerLabel(dayNumber, stop.logisticsRole),
-        markerRole: sightseeing
-          ? 'sightseeing'
-          : markerRole(stop.logisticsRole),
+          : stop.logisticsRole
+            ? logisticsRoleMarkerLabel(stop.logisticsRole)
+            : 'LOGISTICS',
+        markerRole: sightseeing ? 'sightseeing' : stopMapMarkerRole(stop),
         ...(stop.logisticsRole === undefined
           ? {}
           : { logisticsRole: stop.logisticsRole }),
@@ -335,7 +275,7 @@ export function deriveWholeTripMapView(
         name: postDay.name,
         latitude: postDay.navigationTarget.latitude,
         longitude: postDay.navigationTarget.longitude,
-        markerLabel: `D${dayNumber} AFTER`,
+        markerLabel: 'AFTER',
         markerRole: 'post-day',
         semanticLabel: 'After sightseeing',
         ...(postDay.targetArrivalTime === undefined
@@ -387,10 +327,10 @@ export function deriveWholeTripMapView(
     days,
     markers,
     routeGroups,
-    initialBoundsCoordinates: sightseeingFocusedBounds(sightseeingCoordinates, [
-      ...stopCoordinates,
-      ...routeCoordinates,
-    ]),
+    initialBoundsCoordinates: sightseeingFocusedMapBounds(
+      sightseeingCoordinates,
+      [...stopCoordinates, ...routeCoordinates],
+    ),
     allBoundsCoordinates,
   };
 }

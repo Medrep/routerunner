@@ -223,10 +223,16 @@ export default function RouteMap({
           );
         });
         map.on('error', () => {
-          setRuntimeError('Map tiles are temporarily unavailable.');
+          setRuntimeError(
+            'Map unavailable offline. Your itinerary and progress still work.',
+          );
         });
       })
-      .catch(() => setRuntimeError('Mapbox could not be initialized.'));
+      .catch(() =>
+        setRuntimeError(
+          'Map unavailable offline. Your itinerary and progress still work.',
+        ),
+      );
 
     return () => {
       cancelled = true;

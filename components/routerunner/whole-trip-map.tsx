@@ -164,10 +164,16 @@ export default function WholeTripMap({ view }: { view: WholeTripMapView }) {
           fitCoordinates(mapbox, map, viewRef.current.initialBoundsCoordinates);
         });
         map.on('error', () => {
-          setRuntimeError('Map tiles are temporarily unavailable.');
+          setRuntimeError(
+            'Map unavailable offline. Your itinerary and progress still work.',
+          );
         });
       })
-      .catch(() => setRuntimeError('Mapbox could not be initialized.'));
+      .catch(() =>
+        setRuntimeError(
+          'Map unavailable offline. Your itinerary and progress still work.',
+        ),
+      );
 
     const currentMarkers = markersRef.current;
     return () => {

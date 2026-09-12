@@ -1,5 +1,7 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+import { PwaStatus } from '@/components/routerunner/pwa-status';
+import { routeRunnerReleaseId } from '@/pwa/release';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import './globals.css';
 
@@ -14,9 +16,23 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'RouteRunner — Copenhagen',
-  description:
-    'Your AI plans. RouteRunner executes. A Copenhagen day-trip prototype.',
+  title: 'RouteRunner',
+  description: 'Your AI plans. RouteRunner executes.',
+  manifest: '/manifest.webmanifest',
+  icons: {
+    icon: '/favicon.svg',
+    apple: '/apple-touch-icon.png',
+  },
+  other: {
+    'routerunner-release': routeRunnerReleaseId,
+  },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#176b50',
 };
 
 export default function RootLayout({
@@ -30,6 +46,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
+        <PwaStatus />
       </body>
     </html>
   );

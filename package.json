@@ -7,9 +7,9 @@
   },
   "scripts": {
     "dev": "vinext dev",
-    "build": "vinext build",
+    "build": "node scripts/build-pwa.mjs",
     "start": "wrangler dev --config dist/server/wrangler.json",
-    "test": "node --test domain/__tests__/*.test.ts",
+    "test": "node --test domain/__tests__/*.test.ts pwa/__tests__/*.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "format": "oxfmt"

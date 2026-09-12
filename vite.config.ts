@@ -45,6 +45,11 @@ export default defineConfig(async () => {
   const { cloudflare } = await import('@cloudflare/vite-plugin');
 
   return {
+    define: {
+      __ROUTERUNNER_RELEASE_ID__: JSON.stringify(
+        process.env.ROUTERUNNER_RELEASE_ID ?? 'development',
+      ),
+    },
     css: { postcss: { plugins: [tailwindcss()] } },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }

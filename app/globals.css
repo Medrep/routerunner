@@ -161,6 +161,8 @@ body {
 }
 body {
   margin: 0;
+  min-height: 100dvh;
+  padding-top: env(safe-area-inset-top);
   font-family: Arial, Helvetica, sans-serif;
   color: var(--foreground);
 }
@@ -418,6 +420,9 @@ body {
 }
 .prototype {
   max-width: 1120px;
+  padding-right: max(36px, env(safe-area-inset-right));
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: max(36px, env(safe-area-inset-left));
 }
 .prototype-bar {
   min-height: 51px;
@@ -2125,7 +2130,7 @@ footer small {
   border-radius: 22px 22px 0 0;
   max-height: 92dvh;
   overflow-y: auto;
-  padding: 20px 24px 26px;
+  padding: 20px 24px calc(26px + env(safe-area-inset-bottom));
   gap: 0;
   box-shadow: 0 -10px 60px #153b3425;
 }
@@ -2235,7 +2240,8 @@ footer small {
 }
 @media (max-width: 700px) {
   .prototype {
-    padding: 0 18px;
+    padding-right: max(18px, env(safe-area-inset-right));
+    padding-left: max(18px, env(safe-area-inset-left));
   }
   .prototype-bar {
     min-height: 43px;
@@ -2530,12 +2536,13 @@ footer small {
     bottom: calc(max(16px, env(safe-area-inset-bottom)) + 42px);
   }
   .stop-sheet[data-slot] {
-    padding: 18px 20px 24px;
+    padding: 18px 20px calc(24px + env(safe-area-inset-bottom));
   }
 }
 @media (max-width: 360px) {
   .prototype {
-    padding: 0 13px;
+    padding-right: max(13px, env(safe-area-inset-right));
+    padding-left: max(13px, env(safe-area-inset-left));
   }
   .day-chip {
     display: none;
@@ -2557,6 +2564,50 @@ footer small {
   }
   .deadline {
     font-size: 12px;
+  }
+}
+
+.pwa-status {
+  position: fixed;
+  z-index: 30;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  max-width: min(330px, calc(100vw - 24px));
+  padding: 8px 11px;
+  border: 1px solid #b9cec2;
+  border-radius: 9px;
+  color: #24523e;
+  background: #f7fbf8f2;
+  box-shadow: 0 3px 14px #18362b24;
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+.pwa-status.update-available {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pwa-status.update-available span {
+  color: #53635c;
+}
+.fullscreen-map .map-location-panel {
+  top: calc(max(16px, env(safe-area-inset-top)) + 60px);
+  left: max(14px, env(safe-area-inset-left));
+}
+.fullscreen-map .mapboxgl-ctrl-bottom-right {
+  right: max(10px, env(safe-area-inset-right));
+  bottom: max(3px, env(safe-area-inset-bottom));
+}
+.fullscreen-map .whole-trip-map-error {
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 32px);
+}
+@media (max-width: 700px) {
+  .fullscreen-map .whole-trip-map-toolbar {
+    right: max(12px, env(safe-area-inset-right));
+    left: max(12px, env(safe-area-inset-left));
+    width: auto;
   }
 }
 

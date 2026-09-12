@@ -101,7 +101,6 @@ export default function WholeTripMap({ view }: { view: WholeTripMapView }) {
       markerButton.className = `whole-trip-stop-marker ${markerView.markerRole} ${markerView.kind === 'stop' ? markerView.status : ''}`;
       markerButton.style.setProperty('--day-color', markerView.dayStyle.color);
       markerButton.textContent = markerView.markerLabel;
-      markerButton.title = markerView.name;
       markerButton.setAttribute(
         'aria-label',
         `${markerView.markerLabel}. ${markerView.name}. ${markerView.semanticLabel}.`,

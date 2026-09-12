@@ -243,6 +243,10 @@ void test('map UI removes permanent names, keeps transient selection, and omits 
     new URL('../../components/routerunner/route-map.tsx', import.meta.url),
     'utf8',
   );
+  const wholeTripMapSource = readFileSync(
+    new URL('../../components/routerunner/whole-trip-map.tsx', import.meta.url),
+    'utf8',
+  );
   const css = readFileSync(
     new URL('../../app/globals.css', import.meta.url),
     'utf8',
@@ -254,9 +258,23 @@ void test('map UI removes permanent names, keeps transient selection, and omits 
 
   assert.match(routeMapSource, /markerButton\.textContent = stop\.markerLabel/);
   assert.doesNotMatch(routeMapSource, /dataset\.label|attr\(data-label\)/);
+  assert.doesNotMatch(routeMapSource, /markerButton\.title\s*=/);
+  assert.doesNotMatch(wholeTripMapSource, /markerButton\.title\s*=/);
   assert.doesNotMatch(css, /\.mapbox-stop-marker::after/);
+  assert.match(
+    routeMapSource,
+    /`\$\{stop\.markerLabel\}\. \$\{stop\.name\}, \$\{stop\.status\}, \$\{stop\.semanticLabel\}`/,
+  );
+  assert.match(
+    wholeTripMapSource,
+    /`\$\{markerView\.markerLabel\}\. \$\{markerView\.name\}\. \$\{markerView\.semanticLabel\}\.`/,
+  );
   assert.match(routeMapSource, /setSelectedStopId\(stop\.stopId\)/);
   assert.match(routeMapSource, /<strong>\{selectedStop\.name\}<\/strong>/);
+  assert.match(
+    wholeTripMapSource,
+    /<strong>\{selectedMarker\.name\}<\/strong>/,
+  );
   assert.doesNotMatch(
     routeMapSource,
     /onStopRef|setDetail|setExecution|persist/,

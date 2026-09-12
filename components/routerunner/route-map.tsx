@@ -115,7 +115,6 @@ export default function RouteMap({
         'aria-label',
         `${stop.markerLabel}. ${stop.name}, ${stop.status}, ${stop.semanticLabel}`,
       );
-      markerButton.title = stop.name;
       markerButton.addEventListener('click', () =>
         setSelectedStopId(stop.stopId),
       );

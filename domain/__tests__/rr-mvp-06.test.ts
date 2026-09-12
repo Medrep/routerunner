@@ -31,6 +31,8 @@ import {
 } from '../../data/trips/copenhagen.ts';
 import {
   activateRouteMapLocation,
+  createRouteMapOverlayState,
+  syncRouteMapPlannedOverlays,
   syncRouteMapUserMarker,
 } from '../../components/routerunner/route-map-location.ts';
 
@@ -171,15 +173,32 @@ class FakeClock implements ForegroundLocationTimerAdapter {
 }
 
 class FakeMapMarker {
+  static constructorCount = 0;
+  static constructorCountByKind = new Map<string, number>();
   removed = 0;
-  coordinates: [number, number][];
+  setLngLatCalls = 0;
+  addedTo: unknown;
+  readonly coordinates: [number, number][] = [];
+  readonly kind: string;
 
-  constructor(initialCoordinates: [number, number]) {
-    this.coordinates = [initialCoordinates];
+  constructor(initialCoordinates?: [number, number], kind = 'user') {
+    FakeMapMarker.constructorCount += 1;
+    FakeMapMarker.constructorCountByKind.set(
+      kind,
+      (FakeMapMarker.constructorCountByKind.get(kind) ?? 0) + 1,
+    );
+    this.kind = kind;
+    if (initialCoordinates) this.setLngLat(initialCoordinates);
   }
 
   setLngLat(coordinates: [number, number]): this {
+    this.setLngLatCalls += 1;
     this.coordinates.push(coordinates);
+    return this;
+  }
+
+  addTo(map: unknown): this {
+    this.addedTo = map;
     return this;
   }
 
@@ -454,12 +473,21 @@ void test('rapid repeated Retry keeps only the latest watch and callbacks author
   const { controller, states, visibility, clock } =
     collectLocationController(geolocation);
   controller.setActive(true);
+  assert.deepEqual([...geolocation.liveWatchIds], [1]);
+  assert.equal(visibility.listeners.size, 1);
   geolocation.sendError(2, 'temporarily unavailable', 1);
 
   controller.retry();
-  controller.retry();
-  controller.retry();
+  assert.deepEqual(geolocation.cleared, [1]);
+  assert.deepEqual([...geolocation.liveWatchIds], [2]);
+  assert.equal(visibility.listeners.size, 1);
 
+  controller.retry();
+  assert.deepEqual(geolocation.cleared, [1, 2]);
+  assert.deepEqual([...geolocation.liveWatchIds], [3]);
+  assert.equal(visibility.listeners.size, 1);
+
+  controller.retry();
   assert.deepEqual(geolocation.cleared, [1, 2, 3]);
   assert.deepEqual([...geolocation.liveWatchIds], [4]);
   assert.equal(visibility.listeners.size, 1);
@@ -733,75 +761,142 @@ void test('the hook owns one controller and immediately masks ineligible present
   assert.match(hookSource, /controllerRef\.current\?\.retry\(\)/);
 });
 
-void test('a location-only runtime update retains map, Stop and Via marker instances', () => {
+void test('production overlay synchronization retains map, Stop and Via markers through repeated GPS fixes', () => {
   const map = { identity: 'retained-map' };
-  const mapRef = { current: map };
-  const stopMarker = { identity: 'stop-marker' };
-  const viaMarker = { identity: 'via-marker' };
-  const stopMarkers = new Map([['stop-1', stopMarker]]);
-  const viaMarkers = new Map([[0, viaMarker]]);
-  const stopMarkersRef = stopMarkers;
-  const viaMarkersRef = viaMarkers;
-  let createCalls = 0;
-  const createMarker = (
-    receivedMap: typeof map,
-    coordinates: [number, number],
-  ) => {
-    assert.strictEqual(receivedMap, map);
-    createCalls += 1;
-    return new FakeMapMarker(coordinates);
+  const baseView = deriveRouteMapView(copenhagenTrip, activeState());
+  const plannedView = {
+    ...baseView,
+    navigationViaPoints: [
+      { longitude: 12.591, latitude: 55.681 },
+      { longitude: 12.592, latitude: 55.682 },
+    ],
   };
-  const firstLocation: ForegroundLocationState = {
-    status: 'available',
-    coordinates: {
-      latitude: 55.6841,
-      longitude: 12.593,
-      accuracy: 8,
-      observedAt: startedAt,
-    },
-  };
-  const secondLocation: ForegroundLocationState = {
-    status: 'available',
-    coordinates: {
-      latitude: 55.6842,
-      longitude: 12.5931,
-      accuracy: 7,
-      observedAt: '2026-09-08T08:05:10.000Z',
-    },
-  };
+  const overlayState = createRouteMapOverlayState<
+    typeof map,
+    FakeMapMarker,
+    FakeMapMarker,
+    FakeMapMarker
+  >(map);
+  FakeMapMarker.constructorCount = 0;
+  FakeMapMarker.constructorCountByKind.clear();
 
-  const userMarker = syncRouteMapUserMarker(
-    mapRef.current,
-    firstLocation,
-    null,
-    createMarker,
-  );
+  syncRouteMapPlannedOverlays(overlayState, plannedView, {
+    createStopMarker: (receivedMap, stop) => {
+      assert.strictEqual(receivedMap, map);
+      return new FakeMapMarker(undefined, 'stop')
+        .setLngLat([stop.longitude, stop.latitude])
+        .addTo(receivedMap);
+    },
+    createViaMarker: (receivedMap, point) => {
+      assert.strictEqual(receivedMap, map);
+      return new FakeMapMarker(undefined, 'via')
+        .setLngLat([point.longitude, point.latitude])
+        .addTo(receivedMap);
+    },
+  });
+
+  const stopMarkers = [...overlayState.stopMarkers.values()];
+  const viaMarkers = [...overlayState.viaMarkers.values()];
+  const plannedConstructorCount = FakeMapMarker.constructorCount;
+  assert.equal(stopMarkers.length, plannedView.stops.length);
+  assert.equal(viaMarkers.length, plannedView.navigationViaPoints.length);
+  assert.equal(plannedConstructorCount, stopMarkers.length + viaMarkers.length);
+  assert.ok(stopMarkers.every((marker) => marker.kind === 'stop'));
+  assert.ok(viaMarkers.every((marker) => marker.kind === 'via'));
+
+  const locations: ForegroundLocationState[] = [
+    {
+      status: 'available',
+      coordinates: {
+        latitude: 55.6841,
+        longitude: 12.593,
+        accuracy: 8,
+        observedAt: startedAt,
+      },
+    },
+    {
+      status: 'available',
+      coordinates: {
+        latitude: 55.6842,
+        longitude: 12.5931,
+        accuracy: 7,
+        observedAt: '2026-09-08T08:05:10.000Z',
+      },
+    },
+    {
+      status: 'available',
+      coordinates: {
+        latitude: 55.6843,
+        longitude: 12.5932,
+        accuracy: 6,
+        observedAt: '2026-09-08T08:05:20.000Z',
+      },
+    },
+  ];
+
+  for (const location of locations) {
+    syncRouteMapUserMarker(overlayState, location, (receivedMap, coordinates) =>
+      new FakeMapMarker(undefined, 'user')
+        .setLngLat(coordinates)
+        .addTo(receivedMap),
+    );
+    assert.strictEqual(overlayState.map, map);
+    [...overlayState.stopMarkers.values()].forEach((marker, index) => {
+      assert.strictEqual(marker, stopMarkers[index]);
+      assert.equal(marker.removed, 0);
+    });
+    [...overlayState.viaMarkers.values()].forEach((marker, index) => {
+      assert.strictEqual(marker, viaMarkers[index]);
+      assert.equal(marker.removed, 0);
+    });
+    assert.equal(
+      FakeMapMarker.constructorCountByKind.get('stop'),
+      stopMarkers.length,
+    );
+    assert.equal(
+      FakeMapMarker.constructorCountByKind.get('via'),
+      viaMarkers.length,
+    );
+  }
+
+  const userMarker = overlayState.userMarker;
   assert.ok(userMarker);
-  const updatedUserMarker = syncRouteMapUserMarker(
-    mapRef.current,
-    secondLocation,
-    userMarker,
-    createMarker,
-  );
-
-  assert.strictEqual(mapRef.current, map);
-  assert.strictEqual(stopMarkers, stopMarkersRef);
-  assert.strictEqual(viaMarkers, viaMarkersRef);
-  assert.strictEqual(stopMarkers.get('stop-1'), stopMarker);
-  assert.strictEqual(viaMarkers.get(0), viaMarker);
-  assert.strictEqual(updatedUserMarker, userMarker);
-  assert.equal(createCalls, 1);
+  assert.strictEqual(overlayState.map, map);
+  const retainedStopMarkers = [...overlayState.stopMarkers.values()];
+  const retainedViaMarkers = [...overlayState.viaMarkers.values()];
+  stopMarkers.forEach((marker, index) => {
+    assert.strictEqual(retainedStopMarkers[index], marker);
+  });
+  viaMarkers.forEach((marker, index) => {
+    assert.strictEqual(retainedViaMarkers[index], marker);
+  });
+  assert.ok(stopMarkers.every((marker) => marker.removed === 0));
+  assert.ok(viaMarkers.every((marker) => marker.removed === 0));
+  assert.ok(stopMarkers.every((marker) => marker.setLngLatCalls === 1));
+  assert.ok(viaMarkers.every((marker) => marker.setLngLatCalls === 1));
+  assert.equal(FakeMapMarker.constructorCount, plannedConstructorCount + 1);
+  assert.equal(FakeMapMarker.constructorCountByKind.get('user'), 1);
   assert.deepEqual(userMarker.coordinates, [
     [12.593, 55.6841],
     [12.5931, 55.6842],
+    [12.5932, 55.6843],
   ]);
+  assert.equal(userMarker.setLngLatCalls, 3);
   assert.equal(userMarker.removed, 0);
 });
 
 void test('GPS updates move only the marker while My location clicks alone recenter', () => {
   const map = new FakeLocationCamera();
-  const marker = new FakeMapMarker([12.593, 55.6841]);
-  const createMarker = () => marker;
+  const overlayState = createRouteMapOverlayState<
+    FakeLocationCamera,
+    FakeMapMarker,
+    FakeMapMarker,
+    FakeMapMarker
+  >(map);
+  const createMarker = (
+    _map: FakeLocationCamera,
+    coordinates: [number, number],
+  ) => new FakeMapMarker(coordinates);
   let retryCalls = 0;
   const firstLocation: ForegroundLocationState = {
     status: 'available',
@@ -822,8 +917,8 @@ void test('GPS updates move only the marker while My location clicks alone recen
     },
   };
 
-  syncRouteMapUserMarker(map, firstLocation, marker, createMarker);
-  syncRouteMapUserMarker(map, secondLocation, marker, createMarker);
+  syncRouteMapUserMarker(overlayState, firstLocation, createMarker);
+  syncRouteMapUserMarker(overlayState, secondLocation, createMarker);
   assert.equal(map.easeCalls.length, 0);
 
   activateRouteMapLocation(secondLocation, map, () => {
@@ -842,7 +937,7 @@ void test('GPS updates move only the marker while My location clicks alone recen
       observedAt: '2026-09-08T08:05:20.000Z',
     },
   };
-  syncRouteMapUserMarker(map, thirdLocation, marker, createMarker);
+  syncRouteMapUserMarker(overlayState, thirdLocation, createMarker);
   assert.equal(map.easeCalls.length, 1);
 
   activateRouteMapLocation(thirdLocation, map, () => {
@@ -888,10 +983,21 @@ void test('Day and Full Map share fresh-only location presentation and one-shot 
     'utf8',
   );
   const mapLocationSource = `${routeMapSource}\n${locationHelperSource}`;
+  const locationEffect = routeMapSource.match(
+    /useEffect\(\(\) => \{\s*locationRef\.current = location;[\s\S]*?\}, \[location\]\);/,
+  )?.[0];
 
   assert.match(locationHelperSource, /location\.status !== 'available'/);
-  assert.match(locationHelperSource, /marker\.setLngLat/);
+  assert.match(locationHelperSource, /state\.userMarker\.setLngLat/);
+  assert.match(routeMapSource, /createRouteMapOverlayState/);
+  assert.match(routeMapSource, /syncRouteMapPlannedOverlays/);
   assert.match(routeMapSource, /syncRouteMapUserMarker/);
+  assert.ok(locationEffect);
+  assert.match(locationEffect, /updateUserMarker/);
+  assert.doesNotMatch(
+    locationEffect,
+    /updatePlannedOverlays|syncRouteMapPlannedOverlays/,
+  );
   assert.match(routeMapSource, /aria-label="Show my location"/);
   assert.match(locationHelperSource, /map\.easeTo\(/);
   assert.equal(mapLocationSource.match(/map\.easeTo\(/g)?.length, 1);

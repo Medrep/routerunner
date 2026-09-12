@@ -12,13 +12,14 @@ import type {
 import { deriveRouteMapMarkerDetail, mapboxTokenState } from '@/domain';
 import {
   activateRouteMapLocation,
+  clearRouteMapOverlays,
+  createRouteMapOverlayState,
+  type RouteMapOverlayState,
+  syncRouteMapPlannedOverlays,
   syncRouteMapUserMarker,
 } from './route-map-location';
 
-function removeMarkers<Key>(markers: Map<Key, Marker>): void {
-  for (const marker of markers.values()) marker.remove();
-  markers.clear();
-}
+type MapOverlayState = RouteMapOverlayState<MapboxMap, Marker, Marker, Marker>;
 
 function locationCaption(location: ForegroundLocationState): string {
   switch (location.status) {
@@ -80,9 +81,7 @@ export default function RouteMap({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapboxMap | null>(null);
   const moduleRef = useRef<typeof import('mapbox-gl') | null>(null);
-  const stopMarkersRef = useRef(new Map<string, Marker>());
-  const viaMarkersRef = useRef(new Map<number, Marker>());
-  const userMarkerRef = useRef<Marker | null>(null);
+  const overlayStateRef = useRef<MapOverlayState | null>(null);
   const viewRef = useRef(view);
   const locationRef = useRef(location);
   const fittedCoordinatesKeyRef = useRef<string | undefined>(undefined);
@@ -93,59 +92,54 @@ export default function RouteMap({
 
   function updatePlannedOverlays(map: MapboxMap): void {
     const mapbox = moduleRef.current;
-    if (!mapbox || !map.isStyleLoaded()) return;
+    const state = overlayStateRef.current;
+    if (!mapbox || !map.isStyleLoaded() || !state || state.map !== map) return;
 
-    removeMarkers(viaMarkersRef.current);
-    for (const [
-      index,
-      point,
-    ] of viewRef.current.navigationViaPoints.entries()) {
-      const viaElement = document.createElement('div');
-      viaElement.className = 'mapbox-via-marker';
-      viaElement.setAttribute('aria-label', 'Via planned route');
-      viaElement.title = 'Via planned route';
-      const viaLabel = document.createElement('span');
-      viaLabel.textContent = 'Via';
-      viaElement.appendChild(viaLabel);
-      const marker = new mapbox.default.Marker({
-        element: viaElement,
-        anchor: 'center',
-      })
-        .setLngLat([point.longitude, point.latitude])
-        .addTo(map);
-      viaMarkersRef.current.set(index, marker);
-    }
-
-    removeMarkers(stopMarkersRef.current);
-    for (const stop of viewRef.current.stops) {
-      const markerButton = document.createElement('button');
-      markerButton.type = 'button';
-      markerButton.className = `mapbox-stop-marker ${stop.status} ${stop.markerRole} ${stop.kind === 'sightseeing' ? stop.priority : ''}`;
-      markerButton.textContent = stop.markerLabel;
-      markerButton.setAttribute(
-        'aria-label',
-        `${stop.markerLabel}. ${stop.name}, ${stop.status}, ${stop.semanticLabel}`,
-      );
-      markerButton.addEventListener('click', () =>
-        setSelectedStopId(stop.stopId),
-      );
-      const marker = new mapbox.default.Marker({
-        element: markerButton,
-        anchor: 'center',
-      })
-        .setLngLat([stop.longitude, stop.latitude])
-        .addTo(map);
-      stopMarkersRef.current.set(String(stop.stopId), marker);
-    }
+    syncRouteMapPlannedOverlays(state, viewRef.current, {
+      createViaMarker: (targetMap, point) => {
+        const viaElement = document.createElement('div');
+        viaElement.className = 'mapbox-via-marker';
+        viaElement.setAttribute('aria-label', 'Via planned route');
+        viaElement.title = 'Via planned route';
+        const viaLabel = document.createElement('span');
+        viaLabel.textContent = 'Via';
+        viaElement.appendChild(viaLabel);
+        return new mapbox.default.Marker({
+          element: viaElement,
+          anchor: 'center',
+        })
+          .setLngLat([point.longitude, point.latitude])
+          .addTo(targetMap);
+      },
+      createStopMarker: (targetMap, stop) => {
+        const markerButton = document.createElement('button');
+        markerButton.type = 'button';
+        markerButton.className = `mapbox-stop-marker ${stop.status} ${stop.markerRole} ${stop.kind === 'sightseeing' ? stop.priority : ''}`;
+        markerButton.textContent = stop.markerLabel;
+        markerButton.setAttribute(
+          'aria-label',
+          `${stop.markerLabel}. ${stop.name}, ${stop.status}, ${stop.semanticLabel}`,
+        );
+        markerButton.addEventListener('click', () =>
+          setSelectedStopId(stop.stopId),
+        );
+        return new mapbox.default.Marker({
+          element: markerButton,
+          anchor: 'center',
+        })
+          .setLngLat([stop.longitude, stop.latitude])
+          .addTo(targetMap);
+      },
+    });
   }
 
   function updateUserMarker(map: MapboxMap): void {
     const mapbox = moduleRef.current;
-    if (!mapbox || !map.isStyleLoaded()) return;
-    userMarkerRef.current = syncRouteMapUserMarker(
-      map,
+    const state = overlayStateRef.current;
+    if (!mapbox || !map.isStyleLoaded() || !state || state.map !== map) return;
+    syncRouteMapUserMarker(
+      state,
       locationRef.current,
-      userMarkerRef.current,
       (targetMap, longitudeLatitude) => {
         const userElement = document.createElement('div');
         userElement.className = 'mapbox-user-marker';
@@ -165,7 +159,11 @@ export default function RouteMap({
   }
 
   function handleLocationControl(): void {
-    activateRouteMapLocation(location, mapRef.current, onRetryLocation);
+    activateRouteMapLocation(
+      location,
+      overlayStateRef.current?.map ?? null,
+      onRetryLocation,
+    );
   }
 
   useEffect(() => {
@@ -180,8 +178,7 @@ export default function RouteMap({
     let cancelled = false;
     let resizeObserver: ResizeObserver | undefined;
     let resizeFrame: number | undefined;
-    const stopMarkers = stopMarkersRef.current;
-    const viaMarkers = viaMarkersRef.current;
+    let overlayState: MapOverlayState | undefined;
     void import('mapbox-gl')
       .then((mapbox) => {
         if (cancelled || !containerRef.current) return;
@@ -198,6 +195,13 @@ export default function RouteMap({
           attributionControl: true,
         });
         mapRef.current = map;
+        overlayState = createRouteMapOverlayState<
+          MapboxMap,
+          Marker,
+          Marker,
+          Marker
+        >(map);
+        overlayStateRef.current = overlayState;
         if (typeof ResizeObserver !== 'undefined') {
           resizeObserver = new ResizeObserver(() => map.resize());
           resizeObserver.observe(containerRef.current);
@@ -228,10 +232,10 @@ export default function RouteMap({
       cancelled = true;
       resizeObserver?.disconnect();
       if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame);
-      removeMarkers(stopMarkers);
-      removeMarkers(viaMarkers);
-      userMarkerRef.current?.remove();
-      userMarkerRef.current = null;
+      if (overlayState) clearRouteMapOverlays(overlayState);
+      if (overlayStateRef.current === overlayState) {
+        overlayStateRef.current = null;
+      }
       mapRef.current?.remove();
       mapRef.current = null;
       moduleRef.current = null;

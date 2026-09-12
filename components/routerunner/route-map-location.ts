@@ -1,10 +1,29 @@
-import type { ForegroundLocationState } from '@/domain';
+import type {
+  ForegroundLocationState,
+  RouteMapNavigationViaPointView,
+  RouteMapStopView,
+} from '@/domain';
 
 type LongitudeLatitude = [longitude: number, latitude: number];
 
-export interface RouteMapUserMarker {
-  setLngLat(coordinates: LongitudeLatitude): unknown;
+interface RemovableRouteMapMarker {
   remove(): unknown;
+}
+
+export interface RouteMapUserMarker extends RemovableRouteMapMarker {
+  setLngLat(coordinates: LongitudeLatitude): unknown;
+}
+
+export interface RouteMapOverlayState<
+  MapType,
+  StopMarkerType extends RemovableRouteMapMarker,
+  ViaMarkerType extends RemovableRouteMapMarker,
+  UserMarkerType extends RouteMapUserMarker,
+> {
+  readonly map: MapType;
+  readonly stopMarkers: Map<string, StopMarkerType>;
+  readonly viaMarkers: Map<number, ViaMarkerType>;
+  userMarker: UserMarkerType | null;
 }
 
 export interface RouteMapLocationCamera {
@@ -16,28 +35,127 @@ export interface RouteMapLocationCamera {
   }): unknown;
 }
 
-export function syncRouteMapUserMarker<
+export function createRouteMapOverlayState<
   MapType,
-  MarkerType extends RouteMapUserMarker,
+  StopMarkerType extends RemovableRouteMapMarker,
+  ViaMarkerType extends RemovableRouteMapMarker,
+  UserMarkerType extends RouteMapUserMarker,
 >(
   map: MapType,
+): RouteMapOverlayState<
+  MapType,
+  StopMarkerType,
+  ViaMarkerType,
+  UserMarkerType
+> {
+  return {
+    map,
+    stopMarkers: new Map(),
+    viaMarkers: new Map(),
+    userMarker: null,
+  };
+}
+
+function removeMarkers<Key, MarkerType extends RemovableRouteMapMarker>(
+  markers: Map<Key, MarkerType>,
+): void {
+  for (const marker of markers.values()) marker.remove();
+  markers.clear();
+}
+
+export function syncRouteMapPlannedOverlays<
+  MapType,
+  StopMarkerType extends RemovableRouteMapMarker,
+  ViaMarkerType extends RemovableRouteMapMarker,
+  UserMarkerType extends RouteMapUserMarker,
+>(
+  state: RouteMapOverlayState<
+    MapType,
+    StopMarkerType,
+    ViaMarkerType,
+    UserMarkerType
+  >,
+  view: {
+    readonly stops: readonly RouteMapStopView[];
+    readonly navigationViaPoints: readonly RouteMapNavigationViaPointView[];
+  },
+  factories: {
+    createStopMarker(map: MapType, stop: RouteMapStopView): StopMarkerType;
+    createViaMarker(
+      map: MapType,
+      point: RouteMapNavigationViaPointView,
+      index: number,
+    ): ViaMarkerType;
+  },
+): void {
+  removeMarkers(state.viaMarkers);
+  for (const [index, point] of view.navigationViaPoints.entries()) {
+    state.viaMarkers.set(
+      index,
+      factories.createViaMarker(state.map, point, index),
+    );
+  }
+
+  removeMarkers(state.stopMarkers);
+  for (const stop of view.stops) {
+    state.stopMarkers.set(
+      String(stop.stopId),
+      factories.createStopMarker(state.map, stop),
+    );
+  }
+}
+
+export function syncRouteMapUserMarker<
+  MapType,
+  StopMarkerType extends RemovableRouteMapMarker,
+  ViaMarkerType extends RemovableRouteMapMarker,
+  UserMarkerType extends RouteMapUserMarker,
+>(
+  state: RouteMapOverlayState<
+    MapType,
+    StopMarkerType,
+    ViaMarkerType,
+    UserMarkerType
+  >,
   location: ForegroundLocationState,
-  marker: MarkerType | null,
-  createMarker: (map: MapType, coordinates: LongitudeLatitude) => MarkerType,
-): MarkerType | null {
+  createMarker: (
+    map: MapType,
+    coordinates: LongitudeLatitude,
+  ) => UserMarkerType,
+): void {
   if (location.status !== 'available') {
-    marker?.remove();
-    return null;
+    state.userMarker?.remove();
+    state.userMarker = null;
+    return;
   }
   const coordinates: LongitudeLatitude = [
     location.coordinates.longitude,
     location.coordinates.latitude,
   ];
-  if (marker) {
-    marker.setLngLat(coordinates);
-    return marker;
+  if (state.userMarker) {
+    state.userMarker.setLngLat(coordinates);
+    return;
   }
-  return createMarker(map, coordinates);
+  state.userMarker = createMarker(state.map, coordinates);
+}
+
+export function clearRouteMapOverlays<
+  MapType,
+  StopMarkerType extends RemovableRouteMapMarker,
+  ViaMarkerType extends RemovableRouteMapMarker,
+  UserMarkerType extends RouteMapUserMarker,
+>(
+  state: RouteMapOverlayState<
+    MapType,
+    StopMarkerType,
+    ViaMarkerType,
+    UserMarkerType
+  >,
+): void {
+  removeMarkers(state.stopMarkers);
+  removeMarkers(state.viaMarkers);
+  state.userMarker?.remove();
+  state.userMarker = null;
 }
 
 export function activateRouteMapLocation(

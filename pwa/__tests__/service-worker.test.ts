@@ -8,10 +8,20 @@ import {
   isRootDocumentNavigation,
   precachedAssetUrl,
   releaseCacheName,
+  rootDocumentRelease,
 } from '../service-worker-core.ts';
+import {
+  authoritativeServiceWorkerRelease,
+  verifiedReleaseIdentity,
+} from '../build-verification.ts';
+import {
+  pwaStateForInstalledWorker,
+  pwaStateForRegistration,
+} from '../../components/routerunner/pwa-registration-state.ts';
 
 class MemoryCache {
   entries = new Map<string, Response>();
+  failPutPath?: string;
 
   async match(request: Request | string) {
     const key = typeof request === 'string' ? request : request.url;
@@ -20,6 +30,9 @@ class MemoryCache {
 
   async put(request: Request | string, response: Response) {
     const key = typeof request === 'string' ? request : request.url;
+    if (this.failPutPath && new URL(key).pathname === this.failPutPath) {
+      throw new Error(`Cache put failed for ${this.failPutPath}.`);
+    }
     this.entries.set(key, response.clone());
   }
 }
@@ -77,6 +90,39 @@ void test('complete shell installation is release-scoped and atomic', async () =
   assert.ok(await cache.match(`${origin}/icon-192.png`));
 });
 
+void test('root release marker parsing requires exactly one valid authority', () => {
+  const marker = (value: string) =>
+    `<meta name="routerunner-release" content="${value}">`;
+
+  assert.equal(rootDocumentRelease('<head></head>'), undefined);
+  assert.equal(rootDocumentRelease(marker(releaseId)), releaseId);
+  assert.equal(rootDocumentRelease(marker('other-release')), 'other-release');
+  assert.equal(
+    rootDocumentRelease(`${marker(releaseId)}${marker('other-release')}`),
+    undefined,
+  );
+  assert.equal(
+    rootDocumentRelease(`${marker('other-release')}${marker(releaseId)}`),
+    undefined,
+  );
+  assert.equal(
+    rootDocumentRelease(`${marker(releaseId)}${marker(releaseId)}`),
+    undefined,
+  );
+  assert.equal(
+    rootDocumentRelease(
+      `<meta name="routerunner-release">${marker(releaseId)}`,
+    ),
+    undefined,
+  );
+  assert.equal(
+    rootDocumentRelease(
+      `<meta name="description" content="unrelated">${marker(releaseId)}`,
+    ),
+    releaseId,
+  );
+});
+
 for (const scenario of [
   {
     name: 'failed root fetch',
@@ -104,6 +150,16 @@ for (const scenario of [
         : responseFor(request),
   },
   {
+    name: 'conflicting release markers',
+    fetcher: async (request: Request) =>
+      new URL(request.url).pathname === '/'
+        ? new Response(
+            `<meta name="routerunner-release" content="${releaseId}"><meta name="routerunner-release" content="other">`,
+            { headers: { 'content-type': 'text/html' } },
+          )
+        : responseFor(request),
+  },
+  {
     name: 'failed required asset fetch',
     fetcher: async (request: Request) =>
       new URL(request.url).pathname === '/icon-192.png'
@@ -126,6 +182,111 @@ for (const scenario of [
     assert.deepEqual(await cacheStorage.keys(), ['routerunner-shell:previous']);
   });
 }
+
+void test('cache.put failure rejects the candidate and preserves the old release', async () => {
+  const cacheStorage = new MemoryCacheStorage();
+  await cacheStorage.open('routerunner-shell:previous');
+  const candidate = await cacheStorage.open(releaseCacheName(releaseId));
+  candidate.failPutPath = '/icon-192.png';
+
+  await assert.rejects(
+    installRelease({
+      assetUrls: assets,
+      cacheStorage,
+      fetcher: async (request) => responseFor(request),
+      origin,
+      releaseId,
+    }),
+    /Cache put failed/,
+  );
+  assert.deepEqual(await cacheStorage.keys(), ['routerunner-shell:previous']);
+});
+
+void test('authoritative generated Service Worker release is singular and exact', () => {
+  const declaration = (value: string) =>
+    `var ROUTERUNNER_SW_RELEASE_ID = ${JSON.stringify(value)};`;
+  const rootHtml = `<meta name="routerunner-release" content="${releaseId}">`;
+
+  assert.equal(authoritativeServiceWorkerRelease(''), undefined);
+  assert.equal(
+    authoritativeServiceWorkerRelease(declaration(releaseId)),
+    releaseId,
+  );
+  assert.equal(
+    authoritativeServiceWorkerRelease(
+      `${declaration(releaseId)}\n${declaration('other')}`,
+    ),
+    undefined,
+  );
+  assert.equal(
+    authoritativeServiceWorkerRelease(
+      `${declaration(releaseId)}\n${declaration(releaseId)}`,
+    ),
+    undefined,
+  );
+  assert.throws(
+    () => verifiedReleaseIdentity(releaseId, rootHtml, ''),
+    /Service Worker release/,
+  );
+  assert.throws(
+    () =>
+      verifiedReleaseIdentity(
+        releaseId,
+        rootHtml,
+        `${declaration(releaseId)}\n${declaration('other')}`,
+      ),
+    /Service Worker release/,
+  );
+  assert.throws(
+    () => verifiedReleaseIdentity(releaseId, rootHtml, declaration('other')),
+    /Service Worker release/,
+  );
+  assert.throws(
+    () =>
+      verifiedReleaseIdentity(
+        releaseId,
+        '<meta name="routerunner-release" content="other">',
+        declaration(releaseId),
+      ),
+    /Root release marker/,
+  );
+  assert.deepEqual(
+    verifiedReleaseIdentity(releaseId, rootHtml, declaration(releaseId)),
+    {
+      buildId: releaseId,
+      cacheName: releaseCacheName(releaseId),
+      rootReleaseId: releaseId,
+      serviceWorkerReleaseId: releaseId,
+    },
+  );
+});
+
+void test('client registration states distinguish readiness from a waiting update', () => {
+  const worker = (scriptURL: string) => ({ scriptURL }) as ServiceWorker;
+  const routeRunnerWorker = worker(`${origin}/sw.js`);
+  const unrelatedWorker = worker(`${origin}/other-sw.js`);
+
+  assert.equal(
+    pwaStateForRegistration({ active: routeRunnerWorker, waiting: null }, true),
+    'offline-ready',
+  );
+  assert.equal(
+    pwaStateForRegistration(
+      { active: routeRunnerWorker, waiting: routeRunnerWorker },
+      true,
+    ),
+    'update-available',
+  );
+  assert.equal(
+    pwaStateForRegistration(
+      { active: unrelatedWorker, waiting: unrelatedWorker },
+      true,
+    ),
+    'idle',
+  );
+  assert.equal(pwaStateForInstalledWorker(true), 'update-available');
+  assert.equal(pwaStateForInstalledWorker(false), 'idle');
+});
 
 void test('fetch routing handles only root documents and exact local inventory assets', () => {
   const assetSet = new Set(assets);
@@ -226,6 +387,4 @@ void test('update lifecycle contains no forced takeover or reload', () => {
   );
   assert.doesNotMatch(swSource, /skipWaiting|clients\.claim/);
   assert.doesNotMatch(registrationSource, /controllerchange|location\.reload/);
-  assert.match(registrationSource, /registration\.waiting/);
-  assert.match(registrationSource, /update-available/);
 });

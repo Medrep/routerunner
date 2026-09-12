@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readdirSync } from 'node:fs';
+import { readdirSync, rmSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { build } from 'vite';
@@ -7,6 +7,12 @@ import { build } from 'vite';
 const projectRoot = resolve(import.meta.dirname, '..');
 const releaseId = randomUUID();
 const vinext = join(projectRoot, 'node_modules', '.bin', 'vinext');
+for (const generatedFontDirectory of [
+  join(projectRoot, '.vinext', 'fonts'),
+  join(projectRoot, 'dist', 'client', '_next', 'static', '_vinext_fonts'),
+]) {
+  rmSync(generatedFontDirectory, { force: true, recursive: true });
+}
 const result = spawnSync(vinext, ['build', ...process.argv.slice(2)], {
   cwd: projectRoot,
   env: { ...process.env, ROUTERUNNER_RELEASE_ID: releaseId },

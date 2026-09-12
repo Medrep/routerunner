@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { verifiedReleaseIdentity } from '../pwa/build-verification.ts';
 
 const projectRoot = resolve(import.meta.dirname, '..');
 const clientRoot = join(projectRoot, 'dist', 'client');
@@ -25,7 +26,6 @@ for (const file of requiredFiles) {
 
 const releaseId = readFileSync(join(serverRoot, 'BUILD_ID'), 'utf8').trim();
 const sw = readFileSync(join(clientRoot, 'sw.js'), 'utf8');
-assert.ok(sw.includes(releaseId), 'sw.js release does not match BUILD_ID');
 assert.doesNotMatch(sw, /skipWaiting|clients\.claim|controllerchange/);
 assert.doesNotMatch(sw, /(?:\.env|\.dev\.vars|dist\/server|design-board)/);
 
@@ -41,6 +41,15 @@ const clientJavaScript = staticFiles
   .filter((file) => file.endsWith('.js'))
   .map((file) => readFileSync(file, 'utf8'))
   .join('\n');
+const clientCss = staticFiles
+  .filter((file) => file.endsWith('.css'))
+  .map((file) => readFileSync(file, 'utf8'))
+  .join('\n');
+assert.deepEqual(
+  staticFiles.filter((file) => /\.(?:woff2?|ttf|otf)$/i.test(file)),
+  [],
+  'unexpected generated font assets remain',
+);
 for (const file of staticFiles) {
   const url = `/${relative(clientRoot, file).split(sep).join('/')}`;
   assert.ok(sw.includes(JSON.stringify(url)), `sw.js inventory missing ${url}`);
@@ -90,9 +99,22 @@ assert.match(
   head,
   new RegExp(`<meta name="routerunner-release" content="${releaseId}"\\/?>`),
 );
+const identity = verifiedReleaseIdentity(releaseId, html, sw);
+assert.equal(identity.buildId, identity.rootReleaseId);
+assert.equal(identity.buildId, identity.serviceWorkerReleaseId);
+assert.equal(identity.cacheName, `routerunner-shell:${releaseId}`);
 assert.doesNotMatch(
   head,
   /RouteRunner — Copenhagen|Copenhagen day-trip prototype/,
+);
+assert.doesNotMatch(head, /fonts\.(?:googleapis|gstatic)\.com/i);
+assert.doesNotMatch(head, /<link[^>]+rel="stylesheet"[^>]+https?:\/\//i);
+assert.doesNotMatch(clientCss, /fonts\.(?:googleapis|gstatic)\.com/i);
+assert.doesNotMatch(clientCss, /@font-face/i);
+assert.match(
+  clientCss,
+  /Arial,Helvetica,system-ui,sans-serif/,
+  'system font stack missing from final CSS',
 );
 
 console.log(`PWA build verified for release ${releaseId}.`);

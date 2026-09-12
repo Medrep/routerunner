@@ -33,10 +33,10 @@ interface ServiceWorkerScopeLike {
 }
 
 const worker = globalThis as unknown as ServiceWorkerScopeLike;
-const releaseId = __ROUTERUNNER_RELEASE_ID__;
+export const ROUTERUNNER_SW_RELEASE_ID = __ROUTERUNNER_RELEASE_ID__;
 const assetUrls = __ROUTERUNNER_PRECACHED_URLS__;
 const assetUrlSet = new Set(assetUrls);
-const cacheName = releaseCacheName(releaseId);
+const cacheName = releaseCacheName(ROUTERUNNER_SW_RELEASE_ID);
 const rootUrl = new URL('/', worker.location.origin).toString();
 
 worker.addEventListener('install', (event) => {
@@ -46,7 +46,7 @@ worker.addEventListener('install', (event) => {
       cacheStorage: worker.caches,
       fetcher: (request) => worker.fetch(request),
       origin: worker.location.origin,
-      releaseId,
+      releaseId: ROUTERUNNER_SW_RELEASE_ID,
     }),
   );
 });

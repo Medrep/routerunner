@@ -1,13 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-
-type PwaState = 'idle' | 'offline-ready' | 'update-available';
-
-function isRouteRunnerWorker(registration: ServiceWorkerRegistration) {
-  const worker = registration.waiting ?? registration.active;
-  return worker ? new URL(worker.scriptURL).pathname === '/sw.js' : false;
-}
+import {
+  pwaStateForInstalledWorker,
+  pwaStateForRegistration,
+  type PwaState,
+} from './pwa-registration-state';
 
 export function PwaStatus() {
   const [state, setState] = useState<PwaState>('idle');
@@ -24,12 +22,13 @@ export function PwaStatus() {
     let observedWorker: ServiceWorker | undefined;
 
     const reportRegistration = (registration: ServiceWorkerRegistration) => {
-      if (cancelled || !isRouteRunnerWorker(registration)) return;
-      if (registration.waiting && navigator.serviceWorker.controller) {
-        setState('update-available');
-      } else if (registration.active) {
-        setState('offline-ready');
-      }
+      if (cancelled) return;
+      setState(
+        pwaStateForRegistration(
+          registration,
+          navigator.serviceWorker.controller !== null,
+        ),
+      );
     };
 
     const observeInstalling = (registration: ServiceWorkerRegistration) => {
@@ -37,8 +36,11 @@ export function PwaStatus() {
       if (!observedWorker) return;
       observedWorker.addEventListener('statechange', () => {
         if (observedWorker?.state === 'installed') {
-          if (navigator.serviceWorker.controller && !cancelled) {
-            setState('update-available');
+          const installedState = pwaStateForInstalledWorker(
+            navigator.serviceWorker.controller !== null,
+          );
+          if (installedState !== 'idle' && !cancelled) {
+            setState(installedState);
           } else {
             reportRegistration(registration);
           }

@@ -29,12 +29,16 @@ function metaAttribute(tag: string, attribute: string): string | undefined {
 }
 
 export function rootDocumentRelease(html: string): string | undefined {
+  const releaseMarkers: string[] = [];
   for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
     if (metaAttribute(match[0], 'name') === 'routerunner-release') {
-      return metaAttribute(match[0], 'content');
+      releaseMarkers.push(metaAttribute(match[0], 'content') ?? '');
     }
   }
-  return undefined;
+  if (releaseMarkers.length !== 1 || releaseMarkers[0].length === 0) {
+    return undefined;
+  }
+  return releaseMarkers[0];
 }
 
 export function releaseCacheName(releaseId: string): string {

@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { verifiedReleaseIdentity } from '../pwa/build-verification.ts';
+import { rootDocumentRelease } from '../pwa/service-worker-core.ts';
 
 const projectRoot = resolve(import.meta.dirname, '..');
 const clientRoot = join(projectRoot, 'dist', 'client');
@@ -95,10 +96,7 @@ assert.match(
   /<link rel="apple-touch-icon" href="\/apple-touch-icon\.png"\/?>/,
 );
 assert.match(head, /viewport-fit=cover/);
-assert.match(
-  head,
-  new RegExp(`<meta name="routerunner-release" content="${releaseId}"\\/?>`),
-);
+assert.equal(rootDocumentRelease(head), releaseId);
 const identity = verifiedReleaseIdentity(releaseId, html, sw);
 assert.equal(identity.buildId, identity.rootReleaseId);
 assert.equal(identity.buildId, identity.serviceWorkerReleaseId);

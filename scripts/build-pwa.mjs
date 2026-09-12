@@ -3,6 +3,7 @@ import { readdirSync, rmSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { build } from 'vite';
+import { serviceWorkerReleaseBootstrap } from '../pwa/build-verification.ts';
 
 const projectRoot = resolve(import.meta.dirname, '..');
 const releaseId = randomUUID();
@@ -50,7 +51,6 @@ await build({
   configFile: false,
   define: {
     __ROUTERUNNER_PRECACHED_URLS__: JSON.stringify(assetUrls),
-    __ROUTERUNNER_RELEASE_ID__: JSON.stringify(releaseId),
   },
   build: {
     emptyOutDir: false,
@@ -61,7 +61,12 @@ await build({
     },
     minify: false,
     outDir: clientRoot,
-    rolldownOptions: { output: { codeSplitting: false } },
+    rolldownOptions: {
+      output: {
+        banner: serviceWorkerReleaseBootstrap(releaseId),
+        codeSplitting: false,
+      },
+    },
   },
   logLevel: 'warn',
 });

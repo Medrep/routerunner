@@ -7,7 +7,6 @@ import {
 } from './service-worker-core';
 
 declare const __ROUTERUNNER_PRECACHED_URLS__: readonly string[];
-declare const __ROUTERUNNER_RELEASE_ID__: string;
 
 interface ExtendableEventLike extends Event {
   waitUntil(promise: Promise<unknown>): void;
@@ -30,13 +29,14 @@ interface ServiceWorkerScopeLike {
   caches: CacheStorage;
   fetch(request: Request): Promise<Response>;
   location: Location;
+  __ROUTERUNNER_SW_RELEASE_ID__: string;
 }
 
 const worker = globalThis as unknown as ServiceWorkerScopeLike;
-export const ROUTERUNNER_SW_RELEASE_ID = __ROUTERUNNER_RELEASE_ID__;
+const releaseId = worker.__ROUTERUNNER_SW_RELEASE_ID__;
 const assetUrls = __ROUTERUNNER_PRECACHED_URLS__;
 const assetUrlSet = new Set(assetUrls);
-const cacheName = releaseCacheName(ROUTERUNNER_SW_RELEASE_ID);
+const cacheName = releaseCacheName(releaseId);
 const rootUrl = new URL('/', worker.location.origin).toString();
 
 worker.addEventListener('install', (event) => {
@@ -46,7 +46,7 @@ worker.addEventListener('install', (event) => {
       cacheStorage: worker.caches,
       fetcher: (request) => worker.fetch(request),
       origin: worker.location.origin,
-      releaseId: ROUTERUNNER_SW_RELEASE_ID,
+      releaseId,
     }),
   );
 });

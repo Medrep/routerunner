@@ -12,6 +12,7 @@ import {
 } from '../service-worker-core.ts';
 import {
   authoritativeServiceWorkerRelease,
+  serviceWorkerReleaseBootstrap,
   verifiedReleaseIdentity,
 } from '../build-verification.ts';
 import {
@@ -121,6 +122,67 @@ void test('root release marker parsing requires exactly one valid authority', ()
     ),
     releaseId,
   );
+  assert.equal(
+    rootDocumentRelease(
+      `<!-- name="routerunner-release" content="${releaseId}" -->`,
+    ),
+    undefined,
+  );
+  assert.equal(rootDocumentRelease(`<!-- ${marker(releaseId)} -->`), undefined);
+  assert.equal(
+    rootDocumentRelease(
+      `<script>const fake = '${marker(releaseId)}';</script>`,
+    ),
+    undefined,
+  );
+  assert.equal(
+    rootDocumentRelease(
+      `<style>.fake { content: '${marker(releaseId)}' }</style>`,
+    ),
+    undefined,
+  );
+  assert.equal(
+    rootDocumentRelease(
+      `<meta data-name="routerunner-release" content="${releaseId}">`,
+    ),
+    undefined,
+  );
+  assert.equal(
+    rootDocumentRelease(
+      `<meta name="routerunner-release" data-content="${releaseId}">`,
+    ),
+    undefined,
+  );
+  assert.equal(
+    rootDocumentRelease(
+      `<div name="routerunner-release" content="${releaseId}"></div>`,
+    ),
+    undefined,
+  );
+  assert.equal(
+    rootDocumentRelease(
+      `&lt;meta name="routerunner-release" content="${releaseId}"&gt;`,
+    ),
+    undefined,
+  );
+  assert.equal(
+    rootDocumentRelease(
+      `<meta name="routerunner-release" content="${releaseId}"`,
+    ),
+    undefined,
+  );
+  assert.equal(
+    rootDocumentRelease(
+      `<!-- ${marker('fake')} --><script>'${marker('fake')}'</script>${marker(releaseId)}`,
+    ),
+    releaseId,
+  );
+  assert.equal(
+    rootDocumentRelease(
+      `<meta data-name="routerunner-release" content="fake">${marker(releaseId)}`,
+    ),
+    releaseId,
+  );
 });
 
 for (const scenario of [
@@ -155,6 +217,16 @@ for (const scenario of [
       new URL(request.url).pathname === '/'
         ? new Response(
             `<meta name="routerunner-release" content="${releaseId}"><meta name="routerunner-release" content="other">`,
+            { headers: { 'content-type': 'text/html' } },
+          )
+        : responseFor(request),
+  },
+  {
+    name: 'comment-only fake release marker',
+    fetcher: async (request: Request) =>
+      new URL(request.url).pathname === '/'
+        ? new Response(
+            `<!-- <meta name="routerunner-release" content="${releaseId}"> -->`,
             { headers: { 'content-type': 'text/html' } },
           )
         : responseFor(request),
@@ -203,42 +275,42 @@ void test('cache.put failure rejects the candidate and preserves the old release
 });
 
 void test('authoritative generated Service Worker release is singular and exact', () => {
-  const declaration = (value: string) =>
-    `var ROUTERUNNER_SW_RELEASE_ID = ${JSON.stringify(value)};`;
+  const bootstrap = (value: string) => serviceWorkerReleaseBootstrap(value);
   const rootHtml = `<meta name="routerunner-release" content="${releaseId}">`;
+  const assertInvalidServiceWorker = (source: string) => {
+    assert.equal(authoritativeServiceWorkerRelease(source), undefined);
+    assert.throws(
+      () => verifiedReleaseIdentity(releaseId, rootHtml, source),
+      /Service Worker release/,
+    );
+  };
 
-  assert.equal(authoritativeServiceWorkerRelease(''), undefined);
+  assertInvalidServiceWorker('');
   assert.equal(
-    authoritativeServiceWorkerRelease(declaration(releaseId)),
+    authoritativeServiceWorkerRelease(bootstrap(releaseId)),
     releaseId,
   );
+  assertInvalidServiceWorker(
+    `self.__ROUTERUNNER_SW_RELEASE_ID__ = "${releaseId}"\n`,
+  );
+  assertInvalidServiceWorker(`/* ${bootstrap(releaseId)} */`);
+  assertInvalidServiceWorker(`// ${bootstrap(releaseId)}`);
+  assertInvalidServiceWorker(`const fake = \`${bootstrap(releaseId)}\`;`);
+  assertInvalidServiceWorker(
+    `const fake = ${JSON.stringify(bootstrap(releaseId))};`,
+  );
+  assertInvalidServiceWorker(
+    `const assets = ["/_next/static/${releaseId}/app.js"];`,
+  );
+  assertInvalidServiceWorker(`const cache = "routerunner-shell:${releaseId}";`);
   assert.equal(
     authoritativeServiceWorkerRelease(
-      `${declaration(releaseId)}\n${declaration('other')}`,
+      `${bootstrap(releaseId)}/* ${bootstrap('fake')} */`,
     ),
-    undefined,
-  );
-  assert.equal(
-    authoritativeServiceWorkerRelease(
-      `${declaration(releaseId)}\n${declaration(releaseId)}`,
-    ),
-    undefined,
+    releaseId,
   );
   assert.throws(
-    () => verifiedReleaseIdentity(releaseId, rootHtml, ''),
-    /Service Worker release/,
-  );
-  assert.throws(
-    () =>
-      verifiedReleaseIdentity(
-        releaseId,
-        rootHtml,
-        `${declaration(releaseId)}\n${declaration('other')}`,
-      ),
-    /Service Worker release/,
-  );
-  assert.throws(
-    () => verifiedReleaseIdentity(releaseId, rootHtml, declaration('other')),
+    () => verifiedReleaseIdentity(releaseId, rootHtml, bootstrap('other')),
     /Service Worker release/,
   );
   assert.throws(
@@ -246,12 +318,12 @@ void test('authoritative generated Service Worker release is singular and exact'
       verifiedReleaseIdentity(
         releaseId,
         '<meta name="routerunner-release" content="other">',
-        declaration(releaseId),
+        bootstrap(releaseId),
       ),
     /Root release marker/,
   );
   assert.deepEqual(
-    verifiedReleaseIdentity(releaseId, rootHtml, declaration(releaseId)),
+    verifiedReleaseIdentity(releaseId, rootHtml, bootstrap(releaseId)),
     {
       buildId: releaseId,
       cacheName: releaseCacheName(releaseId),

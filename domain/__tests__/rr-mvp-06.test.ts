@@ -29,6 +29,10 @@ import {
   copenhagenStopIds,
   copenhagenTrip,
 } from '../../data/trips/copenhagen.ts';
+import {
+  activateRouteMapLocation,
+  syncRouteMapUserMarker,
+} from '../../components/routerunner/route-map-location.ts';
 
 const initializedAt = '2026-09-08T08:00:00.000Z';
 const startedAt = '2026-09-08T08:05:00.000Z';
@@ -58,6 +62,7 @@ class FakeVisibility implements VisibilityAdapter {
 class FakeGeolocation implements GeolocationAdapter {
   watchCalls = 0;
   cleared: number[] = [];
+  liveWatchIds = new Set<number>();
   options: PositionOptions[] = [];
   success?: PositionCallback;
   failure?: PositionErrorCallback | null;
@@ -75,6 +80,7 @@ class FakeGeolocation implements GeolocationAdapter {
     this.success = successCallback;
     this.failure = errorCallback;
     this.options.push(options ?? {});
+    this.liveWatchIds.add(this.watchCalls);
     this.callbacks.set(this.watchCalls, {
       success: successCallback,
       failure: errorCallback,
@@ -84,6 +90,7 @@ class FakeGeolocation implements GeolocationAdapter {
 
   clearWatch(watchId: number): void {
     this.cleared.push(watchId);
+    this.liveWatchIds.delete(watchId);
   }
 
   sendPosition(
@@ -122,7 +129,9 @@ class FakeGeolocation implements GeolocationAdapter {
 
 class FakeClock implements ForegroundLocationTimerAdapter {
   now = Date.parse(startedAt);
+  lastTimerId: number | undefined;
   private nextTimerId = 1;
+  private readonly callbacks = new Map<number, () => void>();
   private readonly timers = new Map<
     number,
     { dueAt: number; callback: () => void }
@@ -130,6 +139,8 @@ class FakeClock implements ForegroundLocationTimerAdapter {
 
   setTimeout(callback: () => void, delayMs: number): number {
     const timerId = this.nextTimerId++;
+    this.lastTimerId = timerId;
+    this.callbacks.set(timerId, callback);
     this.timers.set(timerId, { dueAt: this.now + delayMs, callback });
     return timerId;
   }
@@ -150,8 +161,50 @@ class FakeClock implements ForegroundLocationTimerAdapter {
     }
   }
 
+  forceClearedTimer(timerId: number): void {
+    this.callbacks.get(timerId)?.();
+  }
+
   get pendingTimerCount(): number {
     return this.timers.size;
+  }
+}
+
+class FakeMapMarker {
+  removed = 0;
+  coordinates: [number, number][];
+
+  constructor(initialCoordinates: [number, number]) {
+    this.coordinates = [initialCoordinates];
+  }
+
+  setLngLat(coordinates: [number, number]): this {
+    this.coordinates.push(coordinates);
+    return this;
+  }
+
+  remove(): void {
+    this.removed += 1;
+  }
+}
+
+class FakeLocationCamera {
+  readonly easeCalls: Array<{
+    center: [number, number];
+    zoom: number;
+    duration: number;
+  }> = [];
+
+  getZoom(): number {
+    return 12;
+  }
+
+  easeTo(options: {
+    center: [number, number];
+    zoom: number;
+    duration: number;
+  }): void {
+    this.easeCalls.push(options);
   }
 }
 
@@ -365,6 +418,122 @@ void test('identical fixes do not publish or reschedule redundant state', () => 
   controller.dispose();
 });
 
+void test('a stationary newer-timestamp fix renews freshness and rejects the old timer', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, clock } = collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendPosition(55.6841, 12.593, 8, clock.now);
+  const firstTimerId = clock.lastTimerId;
+  assert.ok(firstTimerId);
+
+  clock.advance(10_000);
+  const renewedAt = new Date(clock.now).toISOString();
+  geolocation.sendPosition(55.6841, 12.593, 8, clock.now);
+
+  const renewedState = states.at(-1);
+  assert.equal(renewedState?.status, 'available');
+  assert.equal(
+    renewedState?.status === 'available'
+      ? renewedState.coordinates.observedAt
+      : undefined,
+    renewedAt,
+  );
+  assert.equal(clock.pendingTimerCount, 1);
+
+  clock.forceClearedTimer(firstTimerId);
+  assert.equal(states.at(-1)?.status, 'available');
+  clock.advance(FOREGROUND_LOCATION_FRESHNESS_MS);
+  assert.equal(states.at(-1)?.status, 'available');
+  clock.advance(1);
+  assert.equal(states.at(-1)?.status, 'stale');
+  controller.dispose();
+});
+
+void test('rapid repeated Retry keeps only the latest watch and callbacks authoritative', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, visibility, clock } =
+    collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendError(2, 'temporarily unavailable', 1);
+
+  controller.retry();
+  controller.retry();
+  controller.retry();
+
+  assert.deepEqual(geolocation.cleared, [1, 2, 3]);
+  assert.deepEqual([...geolocation.liveWatchIds], [4]);
+  assert.equal(visibility.listeners.size, 1);
+  assert.deepEqual(states.at(-1), { status: 'locating' });
+
+  geolocation.sendPosition(55.6844, 12.5934, 5, clock.now, 4);
+  const authoritative = states.at(-1);
+  const stateCount = states.length;
+  geolocation.sendPosition(40.7128, -74.006, 50, clock.now, 2);
+  geolocation.sendError(3, 'late timeout', 3);
+
+  assert.equal(states.length, stateCount);
+  assert.deepEqual(states.at(-1), authoritative);
+  assert.deepEqual([...geolocation.liveWatchIds], [4]);
+  controller.dispose();
+});
+
+void test('late success and error from a failed pre-Retry watch cannot overwrite its replacement', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, clock } = collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendError(2, 'temporarily unavailable', 1);
+  controller.retry();
+  geolocation.sendPosition(55.6845, 12.5935, 4, clock.now, 2);
+  const authoritative = states.at(-1);
+  const stateCount = states.length;
+
+  geolocation.sendPosition(34.0522, -118.2437, 80, clock.now, 1);
+  geolocation.sendError(3, 'late timeout', 1);
+
+  assert.equal(states.length, stateCount);
+  assert.deepEqual(states.at(-1), authoritative);
+  assert.deepEqual([...geolocation.liveWatchIds], [2]);
+  controller.dispose();
+});
+
+void test('late callbacks cannot resurrect a deactivated then reactivated generation', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, clock } = collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendPosition(55.6841, 12.593, 8, clock.now, 1);
+  controller.setActive(false);
+  controller.setActive(true);
+  geolocation.sendPosition(55.6846, 12.5936, 3, clock.now, 2);
+  const authoritative = states.at(-1);
+  const stateCount = states.length;
+
+  geolocation.sendPosition(51.5072, -0.1276, 90, clock.now, 1);
+  geolocation.sendError(2, 'late unavailable', 1);
+
+  assert.equal(states.length, stateCount);
+  assert.deepEqual(states.at(-1), authoritative);
+  assert.deepEqual([...geolocation.liveWatchIds], [2]);
+  controller.dispose();
+});
+
+void test('a cleared stale timer firing late cannot change inactive state', () => {
+  const geolocation = new FakeGeolocation();
+  const { controller, states, clock } = collectLocationController(geolocation);
+  controller.setActive(true);
+  geolocation.sendPosition(55.6841, 12.593, 8, clock.now);
+  const staleTimerId = clock.lastTimerId;
+  assert.ok(staleTimerId);
+
+  controller.setActive(false);
+  assert.equal(clock.pendingTimerCount, 0);
+  const inactiveStateCount = states.length;
+  clock.forceClearedTimer(staleTimerId);
+
+  assert.equal(states.length, inactiveStateCount);
+  assert.deepEqual(states.at(-1), { status: 'inactive' });
+  controller.dispose();
+});
+
 for (const [code, status] of [
   [2, 'unavailable'],
   [3, 'timeout'],
@@ -564,6 +733,140 @@ void test('the hook owns one controller and immediately masks ineligible present
   assert.match(hookSource, /controllerRef\.current\?\.retry\(\)/);
 });
 
+void test('a location-only runtime update retains map, Stop and Via marker instances', () => {
+  const map = { identity: 'retained-map' };
+  const mapRef = { current: map };
+  const stopMarker = { identity: 'stop-marker' };
+  const viaMarker = { identity: 'via-marker' };
+  const stopMarkers = new Map([['stop-1', stopMarker]]);
+  const viaMarkers = new Map([[0, viaMarker]]);
+  const stopMarkersRef = stopMarkers;
+  const viaMarkersRef = viaMarkers;
+  let createCalls = 0;
+  const createMarker = (
+    receivedMap: typeof map,
+    coordinates: [number, number],
+  ) => {
+    assert.strictEqual(receivedMap, map);
+    createCalls += 1;
+    return new FakeMapMarker(coordinates);
+  };
+  const firstLocation: ForegroundLocationState = {
+    status: 'available',
+    coordinates: {
+      latitude: 55.6841,
+      longitude: 12.593,
+      accuracy: 8,
+      observedAt: startedAt,
+    },
+  };
+  const secondLocation: ForegroundLocationState = {
+    status: 'available',
+    coordinates: {
+      latitude: 55.6842,
+      longitude: 12.5931,
+      accuracy: 7,
+      observedAt: '2026-09-08T08:05:10.000Z',
+    },
+  };
+
+  const userMarker = syncRouteMapUserMarker(
+    mapRef.current,
+    firstLocation,
+    null,
+    createMarker,
+  );
+  assert.ok(userMarker);
+  const updatedUserMarker = syncRouteMapUserMarker(
+    mapRef.current,
+    secondLocation,
+    userMarker,
+    createMarker,
+  );
+
+  assert.strictEqual(mapRef.current, map);
+  assert.strictEqual(stopMarkers, stopMarkersRef);
+  assert.strictEqual(viaMarkers, viaMarkersRef);
+  assert.strictEqual(stopMarkers.get('stop-1'), stopMarker);
+  assert.strictEqual(viaMarkers.get(0), viaMarker);
+  assert.strictEqual(updatedUserMarker, userMarker);
+  assert.equal(createCalls, 1);
+  assert.deepEqual(userMarker.coordinates, [
+    [12.593, 55.6841],
+    [12.5931, 55.6842],
+  ]);
+  assert.equal(userMarker.removed, 0);
+});
+
+void test('GPS updates move only the marker while My location clicks alone recenter', () => {
+  const map = new FakeLocationCamera();
+  const marker = new FakeMapMarker([12.593, 55.6841]);
+  const createMarker = () => marker;
+  let retryCalls = 0;
+  const firstLocation: ForegroundLocationState = {
+    status: 'available',
+    coordinates: {
+      latitude: 55.6841,
+      longitude: 12.593,
+      accuracy: 8,
+      observedAt: startedAt,
+    },
+  };
+  const secondLocation: ForegroundLocationState = {
+    status: 'available',
+    coordinates: {
+      latitude: 55.6843,
+      longitude: 12.5933,
+      accuracy: 6,
+      observedAt: '2026-09-08T08:05:10.000Z',
+    },
+  };
+
+  syncRouteMapUserMarker(map, firstLocation, marker, createMarker);
+  syncRouteMapUserMarker(map, secondLocation, marker, createMarker);
+  assert.equal(map.easeCalls.length, 0);
+
+  activateRouteMapLocation(secondLocation, map, () => {
+    retryCalls += 1;
+  });
+  assert.deepEqual(map.easeCalls, [
+    { center: [12.5933, 55.6843], zoom: 14, duration: 500 },
+  ]);
+
+  const thirdLocation: ForegroundLocationState = {
+    status: 'available',
+    coordinates: {
+      latitude: 55.6844,
+      longitude: 12.5934,
+      accuracy: 5,
+      observedAt: '2026-09-08T08:05:20.000Z',
+    },
+  };
+  syncRouteMapUserMarker(map, thirdLocation, marker, createMarker);
+  assert.equal(map.easeCalls.length, 1);
+
+  activateRouteMapLocation(thirdLocation, map, () => {
+    retryCalls += 1;
+  });
+  assert.equal(map.easeCalls.length, 2);
+  assert.deepEqual(map.easeCalls[1], {
+    center: [12.5934, 55.6844],
+    zoom: 14,
+    duration: 500,
+  });
+  assert.equal(retryCalls, 0);
+
+  activateRouteMapLocation(
+    { status: 'timeout', message: 'timed out' },
+    map,
+    () => {
+      retryCalls += 1;
+    },
+  );
+  assert.equal(retryCalls, 1);
+  assert.equal(map.easeCalls.length, 2);
+});
+
 void test('Day and Full Map share fresh-only location presentation and one-shot camera control', () => {
   const routeMapSource = readFileSync(
     new URL('../../components/routerunner/route-map.tsx', import.meta.url),
@@ -577,12 +880,21 @@ void test('Day and Full Map share fresh-only location presentation and one-shot 
     new URL('../../app/globals.css', import.meta.url),
     'utf8',
   );
+  const locationHelperSource = readFileSync(
+    new URL(
+      '../../components/routerunner/route-map-location.ts',
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  const mapLocationSource = `${routeMapSource}\n${locationHelperSource}`;
 
-  assert.match(routeMapSource, /currentLocation\.status !== 'available'/);
-  assert.match(routeMapSource, /userMarkerRef\.current\.setLngLat/);
+  assert.match(locationHelperSource, /location\.status !== 'available'/);
+  assert.match(locationHelperSource, /marker\.setLngLat/);
+  assert.match(routeMapSource, /syncRouteMapUserMarker/);
   assert.match(routeMapSource, /aria-label="Show my location"/);
-  assert.match(routeMapSource, /map\.easeTo\(/);
-  assert.equal(routeMapSource.match(/map\.easeTo\(/g)?.length, 1);
+  assert.match(locationHelperSource, /map\.easeTo\(/);
+  assert.equal(mapLocationSource.match(/map\.easeTo\(/g)?.length, 1);
   assert.match(routeMapSource, /Location outdated/);
   assert.match(routeMapSource, /Retry location/);
   assert.match(routeMapSource, /full && runtimeError/);

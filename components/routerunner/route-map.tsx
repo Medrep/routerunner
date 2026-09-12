@@ -10,6 +10,10 @@ import type {
   StopId,
 } from '@/domain';
 import { deriveRouteMapMarkerDetail, mapboxTokenState } from '@/domain';
+import {
+  activateRouteMapLocation,
+  syncRouteMapUserMarker,
+} from './route-map-location';
 
 function removeMarkers<Key>(markers: Map<Key, Marker>): void {
   for (const marker of markers.values()) marker.remove();
@@ -138,43 +142,30 @@ export default function RouteMap({
   function updateUserMarker(map: MapboxMap): void {
     const mapbox = moduleRef.current;
     if (!mapbox || !map.isStyleLoaded()) return;
-    const currentLocation = locationRef.current;
-    if (currentLocation.status !== 'available') {
-      userMarkerRef.current?.remove();
-      userMarkerRef.current = null;
-      return;
-    }
-    const longitudeLatitude: [number, number] = [
-      currentLocation.coordinates.longitude,
-      currentLocation.coordinates.latitude,
-    ];
-    if (userMarkerRef.current) {
-      userMarkerRef.current.setLngLat(longitudeLatitude);
-      return;
-    }
-    const userElement = document.createElement('div');
-    userElement.className = 'mapbox-user-marker';
-    userElement.setAttribute('role', 'img');
-    userElement.setAttribute('aria-label', 'Your current foreground location');
-    userMarkerRef.current = new mapbox.default.Marker({
-      element: userElement,
-      anchor: 'center',
-    })
-      .setLngLat(longitudeLatitude)
-      .addTo(map);
+    userMarkerRef.current = syncRouteMapUserMarker(
+      map,
+      locationRef.current,
+      userMarkerRef.current,
+      (targetMap, longitudeLatitude) => {
+        const userElement = document.createElement('div');
+        userElement.className = 'mapbox-user-marker';
+        userElement.setAttribute('role', 'img');
+        userElement.setAttribute(
+          'aria-label',
+          'Your current foreground location',
+        );
+        return new mapbox.default.Marker({
+          element: userElement,
+          anchor: 'center',
+        })
+          .setLngLat(longitudeLatitude)
+          .addTo(targetMap);
+      },
+    );
   }
 
   function handleLocationControl(): void {
-    const map = mapRef.current;
-    if (location.status === 'available' && map) {
-      map.easeTo({
-        center: [location.coordinates.longitude, location.coordinates.latitude],
-        zoom: Math.max(map.getZoom(), 14),
-        duration: 500,
-      });
-      return;
-    }
-    onRetryLocation();
+    activateRouteMapLocation(location, mapRef.current, onRetryLocation);
   }
 
   useEffect(() => {

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { verifiedReleaseIdentity } from '../pwa/build-verification.ts';
-import { rootDocumentRelease } from '../pwa/service-worker-core.ts';
+import { ROUTERUNNER_RELEASE_HEADER } from '../pwa/service-worker-core.ts';
 
 const projectRoot = resolve(import.meta.dirname, '..');
 const clientRoot = join(projectRoot, 'dist', 'client');
@@ -82,6 +82,8 @@ const response = await worker.fetch(
 );
 assert.equal(response.status, 200);
 assert.match(response.headers.get('content-type') ?? '', /text\/html/i);
+const rootResponseReleaseId = response.headers.get(ROUTERUNNER_RELEASE_HEADER);
+assert.equal(rootResponseReleaseId, releaseId);
 const html = await response.text();
 const head = html.match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? '';
 assert.match(head, /<title>RouteRunner<\/title>/);
@@ -96,9 +98,11 @@ assert.match(
   /<link rel="apple-touch-icon" href="\/apple-touch-icon\.png"\/?>/,
 );
 assert.match(head, /viewport-fit=cover/);
-assert.equal(rootDocumentRelease(head), releaseId);
-const identity = verifiedReleaseIdentity(releaseId, html, sw);
-assert.equal(identity.buildId, identity.rootReleaseId);
+const releaseMeta = `<meta name="routerunner-release" content="${releaseId}"/>`;
+assert.equal(head.split('name="routerunner-release"').length - 1, 1);
+assert.ok(head.includes(releaseMeta));
+const identity = verifiedReleaseIdentity(releaseId, rootResponseReleaseId, sw);
+assert.equal(identity.buildId, identity.rootResponseReleaseId);
 assert.equal(identity.buildId, identity.serviceWorkerReleaseId);
 assert.equal(identity.cacheName, `routerunner-shell:${releaseId}`);
 assert.doesNotMatch(
@@ -114,5 +118,15 @@ assert.match(
   /Arial,Helvetica,system-ui,sans-serif/,
   'system font stack missing from final CSS',
 );
+
+const queryResponse = await worker.fetch(
+  new Request('https://routerunner.build/?trip=rome-field-test-2026'),
+  {},
+  { passThroughOnException() {}, waitUntil() {} },
+);
+assert.equal(queryResponse.status, 200);
+assert.match(queryResponse.headers.get('content-type') ?? '', /text\/html/i);
+assert.equal(queryResponse.headers.get(ROUTERUNNER_RELEASE_HEADER), releaseId);
+await queryResponse.body?.cancel();
 
 console.log(`PWA build verified for release ${releaseId}.`);

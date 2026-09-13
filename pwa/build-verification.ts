@@ -1,7 +1,4 @@
-import {
-  releaseCacheName,
-  rootDocumentRelease,
-} from './service-worker-core.ts';
+import { releaseCacheName } from './service-worker-core.ts';
 
 const SERVICE_WORKER_RELEASE_BOOTSTRAP =
   'self.__ROUTERUNNER_SW_RELEASE_ID__ = ';
@@ -62,13 +59,12 @@ export function authoritativeServiceWorkerRelease(
 
 export function verifiedReleaseIdentity(
   buildId: string,
-  rootHtml: string,
+  rootResponseReleaseId: string | null,
   serviceWorkerSource: string,
 ) {
   if (buildId.length === 0) throw new Error('BUILD_ID is missing.');
-  const rootReleaseId = rootDocumentRelease(rootHtml);
-  if (rootReleaseId !== buildId) {
-    throw new Error('Root release marker does not match BUILD_ID.');
+  if (rootResponseReleaseId !== buildId) {
+    throw new Error('Root response release does not match BUILD_ID.');
   }
   const serviceWorkerReleaseId =
     authoritativeServiceWorkerRelease(serviceWorkerSource);
@@ -78,7 +74,7 @@ export function verifiedReleaseIdentity(
   return {
     buildId,
     cacheName: releaseCacheName(serviceWorkerReleaseId),
-    rootReleaseId,
+    rootResponseReleaseId,
     serviceWorkerReleaseId,
   };
 }

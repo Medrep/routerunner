@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import {
+  pwaNoticeForState,
   pwaStateForInstalledWorker,
   pwaStateForRegistration,
   type PwaState,
@@ -82,18 +83,13 @@ export function PwaStatus() {
     };
   }, []);
 
-  if (state === 'idle') return null;
+  const notice = pwaNoticeForState(state);
+  if (!notice) return null;
 
   return (
-    <output className={`pwa-status ${state}`} aria-live="polite">
-      {state === 'offline-ready' ? (
-        'Available offline'
-      ) : (
-        <>
-          <strong>Update available</strong>
-          <span>Close and reopen RouteRunner when convenient.</span>
-        </>
-      )}
+    <output className="pwa-status update-available" aria-live="polite">
+      <strong>{notice.title}</strong>
+      <span>{notice.detail}</span>
     </output>
   );
 }

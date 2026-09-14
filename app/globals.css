@@ -857,42 +857,55 @@ body {
     0 0 0 10px #2678b42b,
     0 2px 8px #173e5744;
 }
-.map-location-panel {
+.map-location-control-wrap {
   position: absolute;
   z-index: 3;
   top: 60px;
   left: 14px;
-  max-width: min(310px, calc(100% - 92px));
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 7px 6px 10px;
+}
+.map-location-feedback {
+  max-width: 180px;
+  padding: 6px 8px;
   border: 1px solid #cbd7cf;
-  border-radius: 8px;
-  color: #39564a;
+  border-radius: 7px;
+  color: #4a5f54;
   background: #fffffff2;
   box-shadow: 0 2px 8px #233a3017;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.25;
 }
-.map-location-panel output {
-  min-width: 0;
-}
-.map-location-panel button {
-  min-height: 34px;
-  flex: 0 0 auto;
-  padding: 7px 9px;
+.map-location-control {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 11px;
   border: 1px solid #bad0c3;
-  border-radius: 6px;
+  border-radius: 8px;
   color: #24523e;
-  background: #edf4ef;
+  background: #fffffff2;
+  box-shadow: 0 2px 8px #233a3017;
   font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
 }
-.map-location-panel button:disabled {
+.map-location-control:disabled {
   cursor: wait;
   opacity: 0.65;
+}
+.map-location-control[aria-busy='true'] svg {
+  animation: location-control-pulse 1s ease-in-out infinite alternate;
+}
+@keyframes location-control-pulse {
+  to {
+    opacity: 0.35;
+    transform: scale(0.88);
+  }
 }
 .whole-trip-map {
   position: relative;
@@ -2372,10 +2385,9 @@ footer small {
   .map-topline > span:first-child {
     padding: 6px 8px;
   }
-  .map-location-panel {
+  .map-location-control-wrap {
     top: 50px;
     left: 8px;
-    max-width: calc(100% - 16px);
   }
   .map-expand {
     bottom: 12px;
@@ -2596,9 +2608,20 @@ footer small {
 .pwa-status.update-available span {
   color: #53635c;
 }
-.fullscreen-map .map-location-panel {
-  top: calc(max(16px, env(safe-area-inset-top)) + 60px);
-  left: max(14px, env(safe-area-inset-left));
+.fullscreen-map .map-location-control-wrap.is-full {
+  top: calc(max(16px, env(safe-area-inset-top)) + 106px);
+  right: max(10px, env(safe-area-inset-right));
+  left: auto;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.fullscreen-map .map-location-control-wrap.is-full .map-location-control {
+  width: 44px;
+  padding: 0;
+}
+.fullscreen-map .mapboxgl-ctrl-top-right {
+  top: max(16px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
 }
 .fullscreen-map .mapboxgl-ctrl-bottom-right {
   right: max(10px, env(safe-area-inset-right));

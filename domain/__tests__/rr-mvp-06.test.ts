@@ -740,7 +740,7 @@ void test('GPS updates remain separate from execution and use a distinct map fie
   assert.equal(JSON.stringify(execution).includes('55.6841'), false);
 });
 
-void test('the hook owns one controller and immediately masks ineligible presentation', () => {
+void test('the hook keeps one active watcher controller and one inactive one-shot controller', () => {
   const hookSource = readFileSync(
     new URL('../../hooks/use-foreground-location.ts', import.meta.url),
     'utf8',
@@ -750,15 +750,17 @@ void test('the hook owns one controller and immediately masks ineligible present
     hookSource.match(/new ForegroundLocationController\(/g)?.length,
     1,
   );
+  assert.equal(hookSource.match(/new OneShotLocationController\(/g)?.length, 1);
   assert.match(
     hookSource,
     /controllerRef\.current\?\.setActive\(executionActive\)/,
   );
   assert.match(
     hookSource,
-    /location: executionActive \? location : inactiveLocation/,
+    /location: executionActive \? location : oneShotLocation/,
   );
   assert.match(hookSource, /controllerRef\.current\?\.retry\(\)/);
+  assert.match(hookSource, /oneShotControllerRef\.current\?\.request\(\)/);
 });
 
 void test('production overlay synchronization retains map, Stop and Via markers through repeated GPS fixes', () => {
@@ -984,7 +986,7 @@ void test('Day and Full Map share fresh-only location presentation and one-shot 
   );
   const mapLocationSource = `${routeMapSource}\n${locationHelperSource}`;
   const locationEffect = routeMapSource.match(
-    /useEffect\(\(\) => \{\s*locationRef\.current = location;[\s\S]*?\}, \[location\]\);/,
+    /useEffect\(\(\) => \{\s*locationRef\.current = location;[\s\S]*?\}, \[location, onRetryLocation\]\);/,
   )?.[0];
 
   assert.match(locationHelperSource, /location\.status !== 'available'/);
@@ -998,14 +1000,14 @@ void test('Day and Full Map share fresh-only location presentation and one-shot 
     locationEffect,
     /updatePlannedOverlays|syncRouteMapPlannedOverlays/,
   );
-  assert.match(routeMapSource, /aria-label="Show my location"/);
+  assert.match(routeMapSource, /aria-label="My location"/);
   assert.match(locationHelperSource, /map\.easeTo\(/);
   assert.equal(mapLocationSource.match(/map\.easeTo\(/g)?.length, 1);
-  assert.match(routeMapSource, /Location outdated/);
-  assert.match(routeMapSource, /Retry location/);
+  assert.match(routeMapSource, /LocateFixed/);
+  assert.doesNotMatch(routeMapSource, /Location current|accuracy/);
   assert.match(routeMapSource, /full && runtimeError/);
   assert.match(css, /\.mapbox-user-marker[\s\S]*background: #2678b4/);
-  assert.match(css, /\.map-location-panel/);
+  assert.match(css, /\.map-location-control/);
   assert.equal(pageSource.match(/<RouteMap/g)?.length, 2);
   assert.equal(pageSource.match(/location=\{location\}/g)?.length, 2);
   assert.equal(

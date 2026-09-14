@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ForegroundLocationController,
+  OneShotLocationController,
   type ForegroundLocationState,
   type VisibilityAdapter,
 } from '@/domain';
@@ -15,7 +16,10 @@ export function useForegroundLocation(executionActive: boolean): {
 } {
   const [location, setLocation] =
     useState<ForegroundLocationState>(inactiveLocation);
+  const [oneShotLocation, setOneShotLocation] =
+    useState<ForegroundLocationState>(inactiveLocation);
   const controllerRef = useRef<ForegroundLocationController>(null);
+  const oneShotControllerRef = useRef<OneShotLocationController>(null);
 
   useEffect(() => {
     const visibility: VisibilityAdapter = {
@@ -31,23 +35,35 @@ export function useForegroundLocation(executionActive: boolean): {
       setLocation,
     );
     controllerRef.current = controller;
+    const oneShotController = new OneShotLocationController(
+      navigator.geolocation,
+      setOneShotLocation,
+    );
+    oneShotControllerRef.current = oneShotController;
 
     return () => {
       controllerRef.current = null;
+      oneShotControllerRef.current = null;
       controller.dispose();
+      oneShotController.dispose();
     };
   }, []);
 
   useEffect(() => {
+    oneShotControllerRef.current?.reset();
     controllerRef.current?.setActive(executionActive);
   }, [executionActive]);
 
   const retryLocation = useCallback(() => {
-    controllerRef.current?.retry();
-  }, []);
+    if (executionActive) {
+      controllerRef.current?.retry();
+      return;
+    }
+    oneShotControllerRef.current?.request();
+  }, [executionActive]);
 
   return {
-    location: executionActive ? location : inactiveLocation,
+    location: executionActive ? location : oneShotLocation,
     retryLocation,
   };
 }

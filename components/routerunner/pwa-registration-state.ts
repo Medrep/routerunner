@@ -1,5 +1,19 @@
 export type PwaState = 'idle' | 'offline-ready' | 'update-available';
 
+export interface PwaNotice {
+  readonly title: 'Update available';
+  readonly detail: 'Close and reopen RouteRunner when convenient.';
+}
+
+export function pwaNoticeForState(state: PwaState): PwaNotice | null {
+  return state === 'update-available'
+    ? {
+        title: 'Update available',
+        detail: 'Close and reopen RouteRunner when convenient.',
+      }
+    : null;
+}
+
 interface RegistrationWorkers {
   active: ServiceWorker | null;
   waiting: ServiceWorker | null;

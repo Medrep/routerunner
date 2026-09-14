@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { LocateFixed, X } from 'lucide-react';
 import type { Map as MapboxMap, Marker } from 'mapbox-gl';
 import type {
   ForegroundLocationState,
@@ -14,35 +14,14 @@ import {
   activateRouteMapLocation,
   clearRouteMapOverlays,
   createRouteMapOverlayState,
+  routeMapLocationControlModel,
+  shouldCompleteRequestedLocationRecenter,
   type RouteMapOverlayState,
   syncRouteMapPlannedOverlays,
   syncRouteMapUserMarker,
 } from './route-map-location';
 
 type MapOverlayState = RouteMapOverlayState<MapboxMap, Marker, Marker, Marker>;
-
-function locationCaption(location: ForegroundLocationState): string {
-  switch (location.status) {
-    case 'inactive':
-      return 'Location starts with an active day';
-    case 'locating':
-      return 'Finding your foreground location…';
-    case 'available':
-      return `Location current · ±${Math.round(location.coordinates.accuracy)} m`;
-    case 'stale':
-      return `Location outdated · last accuracy ±${Math.round(location.coordinates.accuracy)} m`;
-    case 'denied':
-      return 'Location denied · planned map remains available';
-    case 'unavailable':
-      return 'Location unavailable · planned map remains available';
-    case 'timeout':
-      return 'Location timed out · planned map remains available';
-    case 'unsupported':
-      return 'Location unavailable in this browser';
-    case 'error':
-      return 'Location error · planned map remains available';
-  }
-}
 
 function fitCoordinates(
   mapbox: typeof import('mapbox-gl'),
@@ -84,11 +63,13 @@ export default function RouteMap({
   const overlayStateRef = useRef<MapOverlayState | null>(null);
   const viewRef = useRef(view);
   const locationRef = useRef(location);
+  const pendingLocationRecenterRef = useRef(false);
   const fittedCoordinatesKeyRef = useRef<string | undefined>(undefined);
   const [selectedStopId, setSelectedStopId] = useState<StopId>();
   const [runtimeError, setRuntimeError] = useState<string>();
   const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
   const selectedStop = deriveRouteMapMarkerDetail(view, selectedStopId);
+  const locationControl = routeMapLocationControlModel(location);
 
   function updatePlannedOverlays(map: MapboxMap): void {
     const mapbox = moduleRef.current;
@@ -159,6 +140,8 @@ export default function RouteMap({
   }
 
   function handleLocationControl(): void {
+    pendingLocationRecenterRef.current =
+      location.status !== 'available' || !overlayStateRef.current?.map;
     activateRouteMapLocation(
       location,
       overlayStateRef.current?.map ?? null,
@@ -221,6 +204,15 @@ export default function RouteMap({
           fittedCoordinatesKeyRef.current = JSON.stringify(
             viewRef.current.initialBoundsCoordinates,
           );
+          if (
+            shouldCompleteRequestedLocationRecenter(
+              pendingLocationRecenterRef.current,
+              locationRef.current,
+            )
+          ) {
+            pendingLocationRecenterRef.current = false;
+            activateRouteMapLocation(locationRef.current, map, () => undefined);
+          }
         });
         map.on('error', () => {
           setRuntimeError(
@@ -273,15 +265,26 @@ export default function RouteMap({
   useEffect(() => {
     locationRef.current = location;
     const map = mapRef.current;
-    if (map) updateUserMarker(map);
-  }, [location]);
-
-  const retryable =
-    location.status === 'stale' ||
-    location.status === 'denied' ||
-    location.status === 'unavailable' ||
-    location.status === 'timeout' ||
-    location.status === 'error';
+    if (map) {
+      updateUserMarker(map);
+      if (
+        shouldCompleteRequestedLocationRecenter(
+          pendingLocationRecenterRef.current,
+          location,
+        )
+      ) {
+        pendingLocationRecenterRef.current = false;
+        activateRouteMapLocation(location, map, onRetryLocation);
+      }
+    }
+    if (
+      location.status !== 'inactive' &&
+      location.status !== 'locating' &&
+      location.status !== 'available'
+    ) {
+      pendingLocationRecenterRef.current = false;
+    }
+  }, [location, onRetryLocation]);
 
   if (mapboxTokenState(token) === 'missing') {
     return (
@@ -309,27 +312,30 @@ export default function RouteMap({
         </span>
         <span className="north">↑ N</span>
       </div>
-      {location.status !== 'inactive' && (
-        <div className="map-location-panel">
-          <output aria-live="polite">{locationCaption(location)}</output>
-          {location.status !== 'unsupported' && (
-            <button
-              type="button"
-              aria-label="Show my location"
-              disabled={location.status === 'locating'}
-              onClick={handleLocationControl}
-            >
-              {location.status === 'available'
-                ? 'My location'
-                : location.status === 'locating'
-                  ? 'Locating…'
-                  : retryable
-                    ? 'Retry location'
-                    : 'My location'}
-            </button>
+      <div className={`map-location-control-wrap ${full ? 'is-full' : ''}`}>
+        {locationControl.message && (
+          <output className="map-location-feedback" aria-live="polite">
+            {locationControl.message}
+          </output>
+        )}
+        <button
+          type="button"
+          className="map-location-control"
+          aria-label="My location"
+          aria-busy={location.status === 'locating'}
+          disabled={locationControl.disabled}
+          onClick={handleLocationControl}
+        >
+          {full ? (
+            <LocateFixed size={20} aria-hidden="true" />
+          ) : (
+            <>
+              <LocateFixed size={17} aria-hidden="true" />
+              {locationControl.label}
+            </>
           )}
-        </div>
-      )}
+        </button>
+      </div>
       {!full && !selectedStop && (
         <output className="map-caption">
           <span>Itinerary stop overview · not turn-by-turn routing</span>

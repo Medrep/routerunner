@@ -1,5 +1,6 @@
 export * from './execution/index.ts';
 export * from './location/foreground-location.ts';
+export * from './location/one-shot-location.ts';
 export * from './map/route-map-view.ts';
 export * from './map/whole-trip-map-view.ts';
 export * from './navigation/google-maps.ts';

@@ -35,6 +35,57 @@ export interface RouteMapLocationCamera {
   }): unknown;
 }
 
+export interface RouteMapLocationControlModel {
+  readonly label: 'My location' | 'Locating…' | 'Retry';
+  readonly disabled: boolean;
+  readonly message?: string;
+}
+
+export function routeMapLocationControlModel(
+  location: ForegroundLocationState,
+): RouteMapLocationControlModel {
+  switch (location.status) {
+    case 'locating':
+      return { label: 'Locating…', disabled: true };
+    case 'denied':
+      return {
+        label: 'Retry',
+        disabled: false,
+        message: 'Location permission denied',
+      };
+    case 'timeout':
+      return {
+        label: 'Retry',
+        disabled: false,
+        message: 'Location timed out',
+      };
+    case 'unsupported':
+      return {
+        label: 'Retry',
+        disabled: false,
+        message: 'Location unsupported',
+      };
+    case 'stale':
+    case 'unavailable':
+    case 'error':
+      return {
+        label: 'Retry',
+        disabled: false,
+        message: 'Location unavailable',
+      };
+    case 'inactive':
+    case 'available':
+      return { label: 'My location', disabled: false };
+  }
+}
+
+export function shouldCompleteRequestedLocationRecenter(
+  pending: boolean,
+  location: ForegroundLocationState,
+): boolean {
+  return pending && location.status === 'available';
+}
+
 export function createRouteMapOverlayState<
   MapType,
   StopMarkerType extends RemovableRouteMapMarker,
@@ -163,12 +214,14 @@ export function activateRouteMapLocation(
   map: RouteMapLocationCamera | null,
   retry: () => void,
 ): void {
-  if (location.status === 'available' && map) {
-    map.easeTo({
-      center: [location.coordinates.longitude, location.coordinates.latitude],
-      zoom: Math.max(map.getZoom(), 14),
-      duration: 500,
-    });
+  if (location.status === 'available') {
+    if (map) {
+      map.easeTo({
+        center: [location.coordinates.longitude, location.coordinates.latitude],
+        zoom: Math.max(map.getZoom(), 14),
+        duration: 500,
+      });
+    }
     return;
   }
   retry();
